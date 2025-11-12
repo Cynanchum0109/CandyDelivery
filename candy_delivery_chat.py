@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Candy Delivery Robot Conversation Script
-Uses OpenAI API for conversation
-Scenario: Delivering candy during final exam week
-"""
 
 import os
 import sys
@@ -56,13 +51,12 @@ Your goals are:
 4. Observe their engagement level
 
 Keep the conversation light and natural. Use short sentences (≤12 words) and end with a brief question.""",
-        "example": "How's your day going? Need a quick study break?"
+        "example": "How's your day going? "
     },
 }
 
 
 def load_api_key():
-    """Load API key from environment or local secrets file."""
     api_key = os.getenv(CONFIG["api_key_env"])
     if api_key:
         return api_key.strip()
