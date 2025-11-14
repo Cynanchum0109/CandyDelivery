@@ -38,50 +38,39 @@
 
 
     <script>
-        // --- 1. Define Your Robot's Faces (Pictures or GIFs) ---
         const robotStates = {
             idle: "face1.png",
             speaking: "face2.png",
-            listening: "face3.png"
+            listening: "face3.png",
+            thinking: "face4.png"
         };
-        
-        // --- 2. Create a list of states to cycle through ---
-        const statesToCycle = ['idle', 'speaking', 'listening'];
-        let currentStateIndex = 0;
 
-        // --- 3. Get Reference to HTML Element ---
-        const robotImage = document.getElementById('robot-face');
+        const robotImage = document.getElementById("robot-face");
 
-        // --- 4. Helper Function to Change the Face ---
         function setRobotState(state) {
-            console.log("Setting state to:", state);
+            console.log("Received:", state);
             if (robotStates[state]) {
                 robotImage.src = robotStates[state];
             }
         }
 
-        // --- 5. Automatic Cycler ---
-        function cycleState() {
-            // Get the current state from the array
-            const newState = statesToCycle[currentStateIndex];
-            
-            // Set the robot's face
-            setRobotState(newState);
-            
-            // Move to the next index
-            // The % (modulo) operator makes it wrap back to 0
-            currentStateIndex = (currentStateIndex + 1) % statesToCycle.length;
-        }
+        // --- WebSocket connection to Python ---
+        const socket = new WebSocket("ws://localhost:8765/");
 
-        // --- 6. Set Initial State and Start the Timer ---
-        window.onload = function() {
-            // Show the first face immediately
-            cycleState();
-            
-            // Set an interval to call cycleState every 2000ms (2 seconds)
-            setInterval(cycleState, 2000);
+        socket.onopen = () => {
+            console.log("Connected to Python");
         };
 
+        socket.onmessage = (event) => {
+            setRobotState(event.data);
+        };
+
+        socket.onerror = (err) => {
+            console.error("WebSocket error:", err);
+        };
     </script>
+
+
+    
 </body>
 </html>
