@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Face Auto-Cycler</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f0f2f5;
+            color: #333;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #robot-face {
+            width: 400px;
+            height: 300px;
+            background-color: #ddd;
+            border: 2px solid #333;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            object-fit: cover;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Robot Face Auto-Cycler</h2>
+    <p>Switching images every 2 seconds.</p>
+
+    <img id="robot-face" src="" alt="Robot face">
+
+
+    <script>
+        // --- 1. Define Your Robot's Faces (Pictures or GIFs) ---
+        const robotStates = {
+            idle: "face1.png",
+            speaking: "face2.png",
+            listening: "face3.png"
+        };
+        
+        // --- 2. Create a list of states to cycle through ---
+        const statesToCycle = ['idle', 'speaking', 'listening'];
+        let currentStateIndex = 0;
+
+        // --- 3. Get Reference to HTML Element ---
+        const robotImage = document.getElementById('robot-face');
+
+        // --- 4. Helper Function to Change the Face ---
+        function setRobotState(state) {
+            console.log("Setting state to:", state);
+            if (robotStates[state]) {
+                robotImage.src = robotStates[state];
+            }
+        }
+
+        // --- 5. Automatic Cycler ---
+        function cycleState() {
+            // Get the current state from the array
+            const newState = statesToCycle[currentStateIndex];
+            
+            // Set the robot's face
+            setRobotState(newState);
+            
+            // Move to the next index
+            // The % (modulo) operator makes it wrap back to 0
+            currentStateIndex = (currentStateIndex + 1) % statesToCycle.length;
+        }
+
+        // --- 6. Set Initial State and Start the Timer ---
+        window.onload = function() {
+            // Show the first face immediately
+            cycleState();
+            
+            // Set an interval to call cycleState every 2000ms (2 seconds)
+            setInterval(cycleState, 2000);
+        };
+
+    </script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Face Sync</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: #f0f2f5;
+            color: #333;
+            text-align: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #robot-face {
+            width: 400px;
+            height: 300px;
+            background-color: #ddd;
+            border: 2px solid #333;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            object-fit: cover;
+        }
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            width: 100%;
+            max-width: 400px;
+        }
+        textarea {
+            width: 100%;
+            height: 80px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            font-size: 1rem;
+            box-sizing: border-box;
+        }
+        button {
+            padding: 12px 20px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #listen-button {
+            background-color: #28a745;
+        }
+        #listen-button:hover {
+            background-color: #1e7e34;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Robot Face Synchronizer</h2>
+
+    <img id="robot-face" src="" alt="Robot face">
+
+    <div class="controls">
+        <textarea id="text-to-speak" placeholder="Type what the robot should say..."></textarea>
+        
+        <button id="speak-button">Speak</button>
+        
+        <button id="listen-button">Listen to Me</button>
+    </div>
+
+    <script>
+        // --- 1. Define Your Robot's Faces (Pictures or GIFs) ---
+        // You can replace these with your own URLs
+        const robotStates = {
+            idle: "face1.png",
+            speaking: "face2.png",
+            listening: "face3.png"
+        };
+
+        // --- 2. Get References to HTML Elements ---
+        const robotImage = document.getElementById('robot-face');
+        const speakButton = document.getElementById('speak-button');
+        const listenButton = document.getElementById('listen-button');
+        const textBox = document.getElementById('text-to-speak');
+
+        // --- 3. Helper Function to Change the Face ---
+        function setRobotState(state) {
+            console.log("Setting state to:", state);
+            if (robotStates[state]) {
+                robotImage.src = robotStates[state];
+            }
+        }
+
+        // --- 4. Text-to-Speech (Speaking) Functionality ---
+        function speakText() {
+            const text = textBox.value;
+            if (!text) {
+                console.log("No text to speak.");
+                return;
+            }
+
+            // Create a new speech utterance
+            const utterance = new SpeechSynthesisUtterance(text);
+            
+            // When speaking starts, change the face
+            utterance.onstart = function() {
+                setRobotState('speaking');
+            };
+
+            // When speaking ends, change the face back to idle
+            utterance.onend = function() {
+                setRobotState('idle');
+            };
+
+            // Speak the text
+            window.speechSynthesis.speak(utterance);
+        }
+
+        // --- 5. Speech Recognition (Listening) Functionality ---
+        // Get the browser's SpeechRecognition object
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        
+        function startListening() {
+            if (!SpeechRecognition) {
+                alert("Sorry, your browser doesn't support Speech Recognition.");
+                return;
+            }
+
+            const recognition = new SpeechRecognition();
+
+            // When listening starts, change the face
+            recognition.onstart = function() {
+                setRobotState('listening');
+            };
+
+            // When listening stops, change the face back to idle
+            recognition.onend = function() {
+                setRobotState('idle');
+            };
+
+            // Optional: Log what the user said
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                console.log("User said:", transcript);
+            };
+
+            // Start listening
+            recognition.start();
+        }
+
+        // --- 6. Connect Buttons to Functions ---
+        speakButton.addEventListener('click', speakText);
+        listenButton.addEventListener('click', startListening);
+
+        // --- 7. Set Initial State ---
+        window.onload = function() {
+            setRobotState('idle');
+        };
+
+    </script>
+</body>
+</html>
