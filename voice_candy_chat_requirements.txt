@@ -1,0 +1,64 @@
+# Voice Candy Chat Setup Guide
+
+This guide explains how to prepare a fresh environment to run `voice_candy_chat.py`, the Whisper-based voice interface for the candy-delivery robot.
+
+## 1. Python Version
+- Recommended: **Python 3.10 or 3.11**
+- The project currently runs under **Python 3.13**, but some packages (e.g. Ultralytics) prefer <=3.11. For voice chat alone, 3.13 works.
+
+## 2. Create and Activate a Virtual Environment
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
+## 3. Install Python Packages
+Run this inside the activated `venv`:
+```bash
+pip install \
+    openai \
+    speechrecognition \
+    pyttsx3 \
+    pyaudio \
+    faster-whisper \
+    opencv-python \
+    numpy
+```
+If you see SSL/cert issues on macOS, add `--trusted-host pypi.org --trusted-host files.pythonhosted.org`.
+
+## 4. Additional Tools
+- **FFmpeg** (recommended) for audio conversion:
+  ```bash
+  # macOS (Homebrew)
+  brew install ffmpeg
+  # Linux (Debian/Ubuntu)
+  sudo apt-get install ffmpeg
+  ```
+- **PortAudio** (if PyAudio build fails):
+  ```bash
+  # macOS (Homebrew)
+  brew install portaudio
+  # Linux (Debian/Ubuntu)
+  sudo apt-get install portaudio19-dev
+  ```
+
+## 5. Configure Secrets
+Ensure an OpenAI API key is available by one of the following:
+1. Set environment variable:
+   ```bash
+   export OPENAI_API_KEY="sk-..."
+   ```
+2. Create `.secrets/openai_api_key` containing either:
+   ```
+   OPENAI_API_KEY=sk-...
+   ```
+   or simply the raw key text.
+
+## 6. Run the Voice Chat
+```bash
+source venv/bin/activate
+python voice_candy_chat.py
+```
+You can press `q` + Enter at any time to trigger the friendly goodbye and exit.
+
+Enjoy the candy-delivery voice experience!
