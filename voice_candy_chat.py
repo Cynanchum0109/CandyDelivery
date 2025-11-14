@@ -13,6 +13,7 @@ import sys
 import time
 import tempfile
 import threading
+import threading
 
 
 def ensure_dependencies():
@@ -44,6 +45,7 @@ import pyttsx3
 from faster_whisper import WhisperModel
 
 from candy_delivery_chat import CandyDeliveryChat
+from face import FaceDisplay
 
 
 class VoiceCandyChat:
@@ -55,9 +57,17 @@ class VoiceCandyChat:
         self.recognizer.non_speaking_duration = 0.3
         self.microphone = sr.Microphone()
         self.engine = pyttsx3.init()
+        self.face_display = FaceDisplay()
+        self.face_display.start(blocking=False)
+        self._speech_playing = threading.Event()
         self._exit_event = threading.Event()
+        self._can_listen = threading.Event()
+        self._can_listen.set()
         self._exit_listener = threading.Thread(target=self._monitor_exit_key, daemon=True)
         self._exit_listener.start()
+        self._face_exit_monitor = threading.Thread(target=self._watch_face_exit, daemon=True)
+        self._face_exit_monitor.start()
+        self.listen_delay = float(os.getenv("VOICE_LISTEN_DELAY", "2.0"))
         model_name = os.getenv("WHISPER_MODEL", "small")
         device = os.getenv("WHISPER_DEVICE", "auto")
         initial_compute = os.getenv("WHISPER_COMPUTE", "float16")
@@ -93,7 +103,7 @@ class VoiceCandyChat:
     def configure_tts(self):
         # Moderate speaking speed for clarity
         rate = self.engine.getProperty("rate")
-        self.engine.setProperty("rate", int(rate * 0.9))
+        self.engine.setProperty("rate", int(rate * 1.0))
         self.engine.setProperty("volume", 0.85)
         try:
             for voice in self.engine.getProperty("voices"):
@@ -105,8 +115,27 @@ class VoiceCandyChat:
 
     def speak(self, text: str):
         print(f"Robot: {text}")
+        self._can_listen.clear()
+        def animate():
+            expressions = ["surprised", "neutral"]
+            idx = 0
+            while self._speech_playing.is_set():
+                self.face_display.set_expression(expressions[idx])
+                idx = 1 - idx
+                time.sleep(0.25)
+            self.face_display.set_expression("neutral")
+
+        self._speech_playing.set()
+        anim_thread = threading.Thread(target=animate, daemon=True)
+        anim_thread.start()
+
         self.engine.say(text)
         self.engine.runAndWait()
+
+        self._speech_playing.clear()
+        anim_thread.join()
+        time.sleep(self.listen_delay)
+        self._can_listen.set()
 
     def _transcribe_with_whisper(self, audio: sr.AudioData) -> str:
         wav_bytes = audio.get_wav_data(convert_rate=16000, convert_width=2)
@@ -129,6 +158,11 @@ class VoiceCandyChat:
     def listen(self) -> str:
         if self._exit_event.is_set():
             return "__EXIT__"
+        self._can_listen.wait()
+        if self._exit_event.is_set():
+            return "__EXIT__"
+        while self._speech_playing.is_set():
+            time.sleep(0.05)
         # Automated voice capture: robot listens immediately after speaking.
         # Debug helper (keep for future use):
         # print("Press Enter, then speak. Stop talking to finish.")
@@ -161,7 +195,26 @@ class VoiceCandyChat:
                 break
             if user_input.strip().lower() == "q":
                 self._exit_event.set()
+                self._speech_playing.clear()
+                try:
+                    self.engine.stop()
+                except Exception:
+                    pass
+                self._can_listen.set()
                 break
+
+    def _watch_face_exit(self):
+        while not self._exit_event.is_set():
+            if self.face_display.exit_requested():
+                self._exit_event.set()
+                self._speech_playing.clear()
+                try:
+                    self.engine.stop()
+                except Exception:
+                    pass
+                self._can_listen.set()
+                break
+            time.sleep(0.1)
 
     def run(self):
         print("=" * 60)
@@ -180,18 +233,25 @@ class VoiceCandyChat:
                 while not user_text:
                     user_text = self.listen()
                 if user_text == "__EXIT__":
-                    self.speak("Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!")
+                    self.speak(
+                        "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
+                    )
+                    self.face_display.stop()
                     return
 
-                if user_text.lower() in {"quit", "exit", "q"}:
+                if user_text.lower() in {"quit", "exit", "goodbye", "bye", "see you", "see ya"}:
                     print("Exiting voice chat...")
-                    break
+                    self.speak("Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!")
+                    self.face_display.stop()
+                    return
 
                 response = self.chat.get_response(user_text)
                 self.speak(response)
                 time.sleep(0.3)
         except KeyboardInterrupt:
             print("\nInterrupted by user. Goodbye!")
+        finally:
+            self.face_display.stop()
 
 
 def main():
