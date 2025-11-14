@@ -9,77 +9,54 @@ from openai import OpenAI
 
 # Configuration
 CONFIG = {
-    "api_key_env": "OPENAI_API_KEY",  # Environment variable name
-    "model": "gpt-4o-mini",  # or "gpt-3.5-turbo"
+    "model": "gpt-4o-mini",
     "temperature": 0.7,
     "max_tokens": 180,
 }
 
-# Conversation phases
-CONVERSATION_PHASES = {
-    "greeting": {
-        "name": "Greeting Phase",
-        "system_prompt": """You are a friendly candy delivery robot providing free candy to students during final exam week.
-Your goals are:
-1. Greet students warmly and attract attention
-2. Introduce yourself as a candy delivery robot
-3. Explain that you provide free candy
-4. Encourage students to participate
+# Unified conversation prompt
+SYSTEM_PROMPT = """You are a friendly candy delivery robot providing free candy to students.
 
-Be friendly and enthusiastic but not overly so. Use sentences with no more than 12 words.""",
-        "example": "Hi! I'm the candy robot. Need a tasty break?"
-    },
-    "offering": {
-        "name": "Offering Phase",
-        "system_prompt": """You are offering candy to students.
-Your goals are:
-1. Explain where the candy is (in the basket)
-2. Emphasize that the candy is free
-3. Encourage students to take some
-4. Briefly mention candy types if relevant
+Your personality:
+- Warm, friendly, and encouraging
+- Natural and conversational (not robotic or overly enthusiastic)
+- Genuinely interested in the student's well-being
 
-Maintain a friendly and encouraging tone. Keep sentences under 12 words.""",
-        "example": "Grab some free candy from the basket—there are many flavors!"
-    },
-    "conversation": {
-        "name": "Conversation Phase",
-        "system_prompt": """You are having a friendly conversation with a student.
-Your goals are:
-1. Engage in simple conversation
-2. Ask about their studies or how they're feeling
-3. Provide encouragement and support
-4. Observe their engagement level
+Your goals:
+1. Have natural, engaging conversations with students
+2. Occasionally mention the free candy available (in the basket), but don't repeat it constantly
+3. Ask about their studies, how they're feeling, or their day
+4. Provide encouragement and support during exam week
+5. Keep the conversation flowing naturally
 
-Keep the conversation light and natural. Use short sentences (≤12 words) and end with a brief question.""",
-        "example": "How's your day going? "
-    },
-}
+Guidelines:
+- Keep responses short: around 6 words (~2 seconds of speech)
+- End most responses with a short question to keep the conversation going
+- Don't repeatedly mention the candy unless it's naturally relevant
+- Be conversational, not salesy
+- Show genuine interest in the student
+
+Example responses:
+- "How's your exam prep going?"
+- "Feeling stressed? Take a break!"
+- "What's your favorite subject?"
+- "Need a study break? Grab some candy!"
+"""
 
 
 def load_api_key():
-    api_key = os.getenv(CONFIG["api_key_env"])
-    if api_key:
-        return api_key.strip()
-
-    # Fallback to .secrets/openai_api_key file
-    secrets_path = os.path.join(os.path.dirname(__file__), '.secrets', 'openai_api_key')
-    if os.path.exists(secrets_path):
+    """Load API key from openai_api_key file in current directory"""
+    api_key_path = os.path.join(os.path.dirname(__file__), 'openai_api_key')
+    if os.path.exists(api_key_path):
         try:
-            with open(secrets_path, 'r', encoding='utf-8') as f:
+            with open(api_key_path, 'r', encoding='utf-8') as f:
                 for line in f:
                     line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    if '=' in line:
-                        key, value = line.split('=', 1)
-                        if key.strip() == CONFIG["api_key_env"] and value.strip():
-                            return value.strip()
-                    else:
-                        # Allow plain key without prefix
+                    if line and not line.startswith('#'):
                         return line
         except Exception as err:
-            print(f"Error reading secrets file: {err}")
-
+            print(f"Error reading API key file: {err}")
+    
     return None
 
 
@@ -89,18 +66,17 @@ class CandyDeliveryChat:
         api_key = load_api_key()
         if not api_key:
             print(
-                "Error: OpenAI API key not found. Set environment variable "
-                f"{CONFIG['api_key_env']} or create .secrets/openai_api_key."
+                "Error: OpenAI API key not found. Please create 'openai_api_key' file "
+                "in the current directory with your API key."
             )
             sys.exit(1)
         
         self.client = OpenAI(api_key=api_key)
-        self.current_phase = "greeting"
         self.conversation_history = []
         self.session_start_time = datetime.now()
         
-        # Add system prompt
-        self.add_system_message(CONVERSATION_PHASES[self.current_phase]["system_prompt"])
+        # Add unified system prompt
+        self.add_system_message(SYSTEM_PROMPT)
     
     def add_system_message(self, content):
         """Add system message"""
@@ -143,19 +119,9 @@ class CandyDeliveryChat:
         except Exception as e:
             return f"Sorry, I encountered an issue: {str(e)}"
     
-    def change_phase(self, new_phase):
-        """Change conversation phase"""
-        if new_phase != self.current_phase and new_phase in CONVERSATION_PHASES:
-            self.current_phase = new_phase
-            # Update system prompt
-            # Keep only the last system message
-            self.conversation_history = [msg for msg in self.conversation_history if msg["role"] != "system"]
-            self.add_system_message(CONVERSATION_PHASES[new_phase]["system_prompt"])
-            print(f"\n[Switched to {CONVERSATION_PHASES[new_phase]['name']}]")
-    
     def start_greeting(self):
         """Start greeting"""
-        greeting = CONVERSATION_PHASES["greeting"]["example"]
+        greeting = "Hi! I'm the candy robot. Need a tasty break?"
         self.add_assistant_message(greeting)
         return greeting
     
@@ -168,7 +134,6 @@ class CandyDeliveryChat:
         data = {
             "session_start": self.session_start_time.isoformat(),
             "session_end": datetime.now().isoformat(),
-            "phases": [self.current_phase],
             "conversation": self.conversation_history
         }
         
@@ -182,9 +147,7 @@ class CandyDeliveryChat:
         print("=" * 60)
         print("Candy Delivery Robot Conversation System")
         print("=" * 60)
-        print(f"Current phase: {CONVERSATION_PHASES[self.current_phase]['name']}")
         print("Type 'quit' or 'exit' to exit")
-        print("Type 'phase' to view/switch phases")
         print("Type 'save' to save conversation")
         print("=" * 60)
         print()
@@ -207,27 +170,9 @@ class CandyDeliveryChat:
                     print("\nEnding conversation...")
                     break
                 
-                elif user_input.lower() == 'phase':
-                    print(f"\nCurrent phase: {CONVERSATION_PHASES[self.current_phase]['name']}")
-                    print("Available phases:")
-                    for phase, info in CONVERSATION_PHASES.items():
-                        marker = "✓" if phase == self.current_phase else " "
-                        print(f"  {marker} {phase}: {info['name']}")
-                    print()
-                    continue
-                
                 elif user_input.lower() == 'save':
                     self.save_conversation()
                     continue
-                
-                # Auto phase switching logic
-                if self.current_phase == "greeting" and len(self.conversation_history) > 3:
-                    # After greeting, switch to offering phase
-                    self.change_phase("offering")
-                
-                elif self.current_phase == "offering" and len(self.conversation_history) > 6:
-                    # After offering, switch to conversation phase
-                    self.change_phase("conversation")
                 
                 # Get AI response
                 response = self.get_response(user_input)
