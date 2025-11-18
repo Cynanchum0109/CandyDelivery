@@ -13,7 +13,9 @@ import sys
 import time
 import tempfile
 import threading
-import threading
+import json
+from datetime import datetime
+from openai import OpenAI
 
 
 def ensure_dependencies():
@@ -44,8 +46,144 @@ import speech_recognition as sr
 import pyttsx3
 from faster_whisper import WhisperModel
 
-from candy_delivery_chat import CandyDeliveryChat
-from face import FaceDisplay
+from face_server import FaceServer
+
+# ===================================================================== #
+#                    CANDY DELIVERY CHAT CONFIGURATION                  #
+# ===================================================================== #
+
+# Configuration
+CONFIG = {
+    "model": "gpt-4o-mini",
+    "temperature": 0.7,
+    "max_tokens": 180,
+}
+
+# Unified conversation prompt
+SYSTEM_PROMPT = """You are a friendly candy delivery robot providing free candy to students.
+
+Your personality:
+- Warm, friendly, and encouraging
+- Natural and conversational (not robotic or overly enthusiastic)
+- Genuinely interested in the student's well-being
+
+Your goals:
+1. Have natural, engaging conversations with students
+2. Occasionally mention the free candy available (in the basket)
+3. Ask about their studies, how they're feeling, or their day
+4. Provide encouragement and support for students.
+5. Keep the conversation flowing naturally
+
+Guidelines:
+- Keep responses short: around 6 words (~2 seconds of speech)
+- End most responses with a short question to keep the conversation going
+- Be conversational, not salesy
+- Show genuine interest in the student
+
+"""
+
+
+def load_api_key():
+    """Load API key from openai_api_key file in current directory"""
+    api_key_path = os.path.join(os.path.dirname(__file__), 'openai_api_key')
+    if os.path.exists(api_key_path):
+        try:
+            with open(api_key_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        return line
+        except Exception as err:
+            print(f"Error reading API key file: {err}")
+    
+    return None
+
+
+class CandyDeliveryChat:
+    def __init__(self):
+        """Initialize conversation system"""
+        api_key = load_api_key()
+        if not api_key:
+            print(
+                "Error: OpenAI API key not found. Please create 'openai_api_key' file "
+                "in the current directory with your API key."
+            )
+            sys.exit(1)
+        
+        self.client = OpenAI(api_key=api_key)
+        self.conversation_history = []
+        self.session_start_time = datetime.now()
+        
+        # Add unified system prompt
+        self.add_system_message(SYSTEM_PROMPT)
+    
+    def add_system_message(self, content):
+        """Add system message"""
+        self.conversation_history.append({
+            "role": "system",
+            "content": content
+        })
+    
+    def add_user_message(self, content):
+        """Add user message"""
+        self.conversation_history.append({
+            "role": "user",
+            "content": content
+        })
+    
+    def add_assistant_message(self, content):
+        """Add assistant message"""
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": content
+        })
+    
+    def get_response(self, user_input):
+        """Get AI response"""
+        # Add user input
+        self.add_user_message(user_input)
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=CONFIG["model"],
+                messages=self.conversation_history,
+                temperature=CONFIG["temperature"],
+                max_tokens=CONFIG["max_tokens"]
+            )
+            
+            assistant_reply = response.choices[0].message.content.strip()
+            self.add_assistant_message(assistant_reply)
+            return assistant_reply
+            
+        except Exception as e:
+            return f"Sorry, I encountered an issue: {str(e)}"
+    
+    def start_greeting(self):
+        """Start greeting"""
+        greeting = "Hi! I'm the candy robot. Need a tasty break?"
+        self.add_assistant_message(greeting)
+        return greeting
+    
+    def save_conversation(self, filename=None):
+        """Save conversation log"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"conversation_{timestamp}.json"
+        
+        data = {
+            "session_start": self.session_start_time.isoformat(),
+            "session_end": datetime.now().isoformat(),
+            "conversation": self.conversation_history
+        }
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        
+        print(f"\nConversation saved to: {filename}")
+
+# ===================================================================== #
+#                         VOICE CANDY CHAT                              #
+# ===================================================================== #
 
 
 class VoiceCandyChat:
@@ -57,16 +195,14 @@ class VoiceCandyChat:
         self.recognizer.non_speaking_duration = 0.3
         self.microphone = sr.Microphone()
         self.engine = pyttsx3.init()
-        self.face_display = FaceDisplay()
-        self.face_display.start(blocking=False)
+        # WebSocket face server (replaces FaceDisplay)
+        self.face = FaceServer()
         self._speech_playing = threading.Event()
         self._exit_event = threading.Event()
         self._can_listen = threading.Event()
         self._can_listen.set()
         self._exit_listener = threading.Thread(target=self._monitor_exit_key, daemon=True)
         self._exit_listener.start()
-        self._face_exit_monitor = threading.Thread(target=self._watch_face_exit, daemon=True)
-        self._face_exit_monitor.start()
         self.listen_delay = float(os.getenv("VOICE_LISTEN_DELAY", "2.0"))
         model_name = os.getenv("WHISPER_MODEL", "small")
         device = os.getenv("WHISPER_DEVICE", "auto")
@@ -103,10 +239,12 @@ class VoiceCandyChat:
     def configure_tts(self):
         # Moderate speaking speed for clarity
         rate = self.engine.getProperty("rate")
-        self.engine.setProperty("rate", int(rate * 1.0))
+        # 保持原始速率，或者可以设置为 rate * 0.9 来稍微慢一点
+        self.engine.setProperty("rate", int(rate))
         self.engine.setProperty("volume", 0.85)
         try:
-            for voice in self.engine.getProperty("voices"):
+            voices = self.engine.getProperty("voices")
+            for voice in voices:
                 if "en" in voice.id.lower() or "samantha" in voice.name.lower() or "alex" in voice.name.lower():
                     self.engine.setProperty("voice", voice.id)
                     break
@@ -116,14 +254,16 @@ class VoiceCandyChat:
     def speak(self, text: str):
         print(f"Robot: {text}")
         self._can_listen.clear()
+        
+        # WebSocket face animation: switch between "surprised" and "speaking" while talking
         def animate():
-            expressions = ["surprised", "neutral"]
+            expressions = ["surprised", "speaking"]
             idx = 0
             while self._speech_playing.is_set():
-                self.face_display.set_expression(expressions[idx])
+                self.face.send(expressions[idx])
                 idx = 1 - idx
                 time.sleep(0.25)
-            self.face_display.set_expression("neutral")
+            self.face.send("idle")
 
         self._speech_playing.set()
         anim_thread = threading.Thread(target=animate, daemon=True)
@@ -133,7 +273,8 @@ class VoiceCandyChat:
         self.engine.runAndWait()
 
         self._speech_playing.clear()
-        anim_thread.join()
+        # 等待动画线程结束，但设置超时避免无限阻塞
+        anim_thread.join(timeout=1.0)
         time.sleep(self.listen_delay)
         self._can_listen.set()
 
@@ -143,6 +284,9 @@ class VoiceCandyChat:
             tmp.write(wav_bytes)
             tmp_path = tmp.name
         try:
+            # WebSocket: show thinking state while processing
+            self.face.send("thinking")
+            
             segments, _ = self.whisper_model.transcribe(
                 tmp_path,
                 beam_size=1,
@@ -170,12 +314,15 @@ class VoiceCandyChat:
         # if user_input.strip():
         #     return user_input.strip()
 
-        with self.microphone as source:
-            print("Listening...")
-            self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-            audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=None)
-
+        # WebSocket: show listening state
+        self.face.send("listening")
+        
         try:
+            with self.microphone as source:
+                print("Listening...")
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=None)
+
             text = self._transcribe_with_whisper(audio)
             if text:
                 print(f"You (voice): {text}")
@@ -183,17 +330,40 @@ class VoiceCandyChat:
             print("Whisper could not transcribe audio. Please repeat or type.")
         except sr.WaitTimeoutError:
             print("No speech detected. Please try again or type your message.")
+        except KeyboardInterrupt:
+            # 如果用户中断，返回退出信号
+            self._exit_event.set()
+            return "__EXIT__"
         except Exception as err:
             print(f"Whisper transcription error: {err}")
+        finally:
+            # 确保在出错时也恢复状态
+            if not self._exit_event.is_set():
+                self.face.send("idle")
         return ""
 
     def _monitor_exit_key(self):
-        while True:
+        """在后台线程中监听退出命令"""
+        import sys
+        while not self._exit_event.is_set():
+            user_input = None
             try:
-                user_input = input()
-            except EOFError:
+                # 使用 sys.stdin.readline() 而不是 input()，更适合后台线程
+                if sys.stdin.isatty():
+                    user_input = input()
+                else:
+                    # 如果不是交互式终端，使用 readline
+                    user_input = sys.stdin.readline().strip()
+                    if not user_input:
+                        time.sleep(0.1)
+                        continue
+            except (EOFError, KeyboardInterrupt):
                 break
-            if user_input.strip().lower() == "q":
+            except Exception:
+                time.sleep(0.1)
+                continue
+            
+            if user_input and user_input.strip().lower() == "q":
                 self._exit_event.set()
                 self._speech_playing.clear()
                 try:
@@ -203,24 +373,52 @@ class VoiceCandyChat:
                 self._can_listen.set()
                 break
 
-    def _watch_face_exit(self):
-        while not self._exit_event.is_set():
-            if self.face_display.exit_requested():
-                self._exit_event.set()
-                self._speech_playing.clear()
-                try:
-                    self.engine.stop()
-                except Exception:
-                    pass
-                self._can_listen.set()
-                break
-            time.sleep(0.1)
 
     def run(self):
         print("=" * 60)
         print("Candy Delivery Robot Voice Chat")
+        print("=" * 60)
+        print()
+        
+        # 等待 WebSocket 连接
+        print("Waiting for face.html to connect...")
+        print("Please open face.html in your browser.")
+        print()
+        
+        # 等待连接，最多等待 60 秒
+        if not self.face.wait_for_connection(timeout=60):
+            print("Warning: Face window not connected after 60 seconds.")
+            print("Continuing anyway, but face animations may not work.")
+            print()
+        else:
+            print("✓ Face window connected successfully!")
+            print()
+        
+        # 等待用户按 's' 键开始
+        print("=" * 60)
+        print("Ready to start!")
+        print("Press 's' + Enter to start the conversation.")
+        print("Press 'q' + Enter to exit at any time.")
+        print("=" * 60)
+        print()
+        
+        while True:
+            try:
+                user_input = input("> ").strip().lower()
+                if user_input == 's':
+                    break
+                elif user_input == 'q':
+                    print("Exiting...")
+                    return
+                else:
+                    print("Please press 's' to start or 'q' to quit.")
+            except (EOFError, KeyboardInterrupt):
+                print("\nExiting...")
+                return
+        
+        print()
+        print("Starting conversation...")
         print("Speak or type your responses. Type 'quit' to exit.")
-        print("Tip: press 'q' + Enter at any time to end the session with a goodbye.")
         print("=" * 60)
         print()
 
@@ -236,13 +434,11 @@ class VoiceCandyChat:
                     self.speak(
                         "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
                     )
-                    self.face_display.stop()
                     return
 
                 if user_text.lower() in {"quit", "exit", "goodbye", "bye", "see you", "see ya"}:
                     print("Exiting voice chat...")
                     self.speak("Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!")
-                    self.face_display.stop()
                     return
 
                 response = self.chat.get_response(user_text)
@@ -251,7 +447,13 @@ class VoiceCandyChat:
         except KeyboardInterrupt:
             print("\nInterrupted by user. Goodbye!")
         finally:
-            self.face_display.stop()
+            # 清理资源
+            try:
+                self.face.send("idle")
+                # 保存对话记录
+                self.chat.save_conversation()
+            except Exception:
+                pass
 
 
 def main():

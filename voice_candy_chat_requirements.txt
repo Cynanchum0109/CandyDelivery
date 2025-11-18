@@ -22,7 +22,8 @@ pip install \
     pyaudio \
     faster-whisper \
     opencv-python \
-    numpy
+    numpy \
+    websockets
 ```
 If you see SSL/cert issues on macOS, add `--trusted-host pypi.org --trusted-host files.pythonhosted.org`.
 

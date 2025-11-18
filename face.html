@@ -42,7 +42,8 @@
             idle: "face1.png",
             speaking: "face2.png",
             listening: "face3.png",
-            thinking: "face4.png"
+            thinking: "face4.png",
+            surprised: "face2.png"  // 如果没有专门的图片，可以复用 speaking 的图片
         };
 
         const robotImage = document.getElementById("robot-face");
@@ -67,6 +68,11 @@
 
         socket.onerror = (err) => {
             console.error("WebSocket error:", err);
+        };
+
+        // 设置初始状态为 idle，确保页面加载时显示图片
+        window.onload = function() {
+            setRobotState('idle');
         };
     </script>
 
