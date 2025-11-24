@@ -15,6 +15,9 @@ import tempfile
 import threading
 from datetime import datetime
 from openai import OpenAI
+import webbrowser
+from pathlib import Path
+
 
 
 def ensure_dependencies():
@@ -185,6 +188,7 @@ class VoiceCandyChat:
         self._can_listen.set()
         self._exit_listener = threading.Thread(target=self._monitor_exit_key, daemon=True)
         self._exit_listener.start()
+        self._open_face_window()
         self.listen_delay = float(os.getenv("VOICE_LISTEN_DELAY", "2.0"))
         model_name = os.getenv("WHISPER_MODEL", "small")
         device = os.getenv("WHISPER_DEVICE", "auto")
@@ -217,6 +221,40 @@ class VoiceCandyChat:
                 print("Tip: download models ahead of time or choose a smaller model (e.g. 'base').")
                 sys.exit(1)
         self.configure_tts()
+
+
+    def _open_face_window(self):
+        """
+        Open face.html automatically in the default browser.
+        Assumes face.html is in the same directory as this file.
+        """
+        try:
+            base_dir = Path(__file__).resolve().parent
+            html_path = (base_dir / "face.html").resolve()
+            if html_path.exists():
+                url = html_path.as_uri()
+                webbrowser.open(url, new=1)  # new tab / window
+                print(f"Opened face UI at {url}")
+            else:
+                print("Warning: face.html not found; cannot auto-open UI.")
+        except Exception as e:
+            print(f"Could not open face.html automatically: {e}")
+
+
+    def _send_ui_message(self, sender: str, text: str):
+        """
+        Send a conversation message to the web UI over WebSocket.
+        sender: 'user' or 'robot'
+        """
+        if not text:
+            return
+        prefix = "USER:" if sender.lower() == "user" else "ROBOT:"
+        # avoid newlines breaking formatting
+        safe_text = text.replace("\n", " ").strip()
+        try:
+            self.face.send(f"{prefix}{safe_text}")
+        except Exception as e:
+            print(f"Warning: failed to send UI message: {e}")
 
     def configure_tts(self):
         # Moderate speaking speed for clarity
@@ -251,6 +289,9 @@ class VoiceCandyChat:
             return
         
         print(f"Robot: {text}")
+        # Send robot message to web UI
+        self._send_ui_message("robot", text)
+
         
         # 1. SAFETY DELAY: Give the microphone time to release the audio device
         time.sleep(0.5)
@@ -367,7 +408,10 @@ class VoiceCandyChat:
             text = self._transcribe_with_whisper(audio)
             if text:
                 print(f"You (voice): {text}")
+                # Send user message to web UI
+                self._send_ui_message("user", text)
                 return text
+
             print("Whisper could not transcribe audio. Please repeat or type.")
         except sr.WaitTimeoutError:
             print("No speech detected. Please try again or type your message.")
