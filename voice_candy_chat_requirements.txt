@@ -15,6 +15,11 @@ source venv/bin/activate
 ## 3. Install Python Packages
 Run this inside the activated `venv`:
 ```bash
+pip install -r requirements.txt
+```
+
+Or install manually:
+```bash
 pip install \
     openai \
     speechrecognition \
@@ -23,7 +28,8 @@ pip install \
     faster-whisper \
     opencv-python \
     numpy \
-    websockets
+    websockets \
+    ultralytics
 ```
 If you see SSL/cert issues on macOS, add `--trusted-host pypi.org --trusted-host files.pythonhosted.org`.
 
@@ -55,11 +61,21 @@ Ensure an OpenAI API key is available by one of the following:
    ```
    or simply the raw key text.
 
-## 6. Run the Voice Chat
+## 6. Run the Robot
 ```bash
 source venv/bin/activate
-python voice_candy_chat.py
+python robot_main.py
 ```
+
+Or run individual components:
+```bash
+# Voice chat only
+python voice_candy_chat.py
+
+# Human detection only
+python approach_human.py
+```
+
 You can press `q` + Enter at any time to trigger the friendly goodbye and exit.
 
 Enjoy the candy-delivery voice experience!

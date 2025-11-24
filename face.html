@@ -26,6 +26,7 @@
             border-radius: 10px;
             margin-bottom: 20px;
             object-fit: cover;
+            image-rendering: auto;
         }
     </style>
 </head>
@@ -40,17 +41,29 @@
     <script>
         const robotStates = {
             idle: "face/face1.png",
-            speaking: "face/face2.png",
-            listening: "face/mic.jpg",
-            thinking: "face/face3.png"
+            speaking: "face/speaking.gif",
+            listening: "face/listening.png",
+            thinking: "face/face3.png",
+            surprised: "face/face2.png"  // Fallback for surprised state
         };
 
         const robotImage = document.getElementById("robot-face");
+        let currentState = null;
 
         function setRobotState(state) {
             console.log("Received:", state);
             if (robotStates[state]) {
-                robotImage.src = robotStates[state];
+                // If switching to a new state, update the image
+                if (currentState !== state) {
+                    const newSrc = robotStates[state];
+                    // For GIF files, force reload to restart animation
+                    if (newSrc.endsWith('.gif')) {
+                        robotImage.src = newSrc + '?t=' + Date.now();
+                    } else {
+                        robotImage.src = newSrc;
+                    }
+                    currentState = state;
+                }
             }
         }
 

@@ -43,13 +43,22 @@ activate_venv() {
 install_python_packages() {
     info "Installing Python dependencies..."
     pip install --upgrade pip
-    pip install \
-        openai \
-        speechrecognition \
-        pyttsx3 \
-        pyaudio \
-        faster-whisper \
-        websockets
+    if [ -f "requirements.txt" ]; then
+        info "Installing from requirements.txt..."
+        pip install -r requirements.txt
+    else
+        info "requirements.txt not found, installing packages manually..."
+        pip install \
+            openai \
+            speechrecognition \
+            pyttsx3 \
+            pyaudio \
+            faster-whisper \
+            websockets \
+            opencv-python \
+            ultralytics \
+            numpy
+    fi
 }
 
 main() {
@@ -58,9 +67,13 @@ main() {
     create_venv
     activate_venv
     install_python_packages
-    info "Setup complete. To run voice chat:"
+    info "Setup complete. To run the robot:"
     echo "    source $VENV_DIR/bin/activate"
-    echo "    python voice_candy_chat.py"
+    echo "    python robot_main.py"
+    echo ""
+    echo "Or run individual components:"
+    echo "    python voice_candy_chat.py  # Voice chat only"
+    echo "    python approach_human.py    # Human detection only"
 }
 
 main "$@"

@@ -234,29 +234,47 @@ class VoiceCandyChat:
             pass
 
     def speak(self, text: str):
+        if not text:
+            return
+        
         print(f"Robot: {text}")
+        
+        # 1. SAFETY DELAY: Give the microphone time to release the audio device
+        time.sleep(0.5)
         self._can_listen.clear()
         
-        # WebSocket face animation: switch between "surprised" and "speaking" while talking
+        # WebSocket face animation: show speaking.gif while talking
         def animate():
-            expressions = ["surprised", "speaking"]
-            idx = 0
+            # Send speaking state to show speaking.gif
+            self.face.send("speaking")
+            # Keep sending speaking state while talking
             while self._speech_playing.is_set():
-                self.face.send(expressions[idx])
-                idx = 1 - idx
-                time.sleep(0.25)
+                time.sleep(0.1)  # Small sleep to avoid busy waiting
             self.face.send("idle")
 
         self._speech_playing.set()
         anim_thread = threading.Thread(target=animate, daemon=True)
         anim_thread.start()
 
-        self.engine.say(text)
-        self.engine.runAndWait()
+        try:
+            # 2. PRIMARY TTS: Try pyttsx3
+            self.engine.say(text)
+            self.engine.runAndWait()
+        except Exception as e:
+            print(f"pyttsx3 failed ({e}), trying system fallback...")
+            # 3. FALLBACK TTS: If pyttsx3 skips/fails, use system command directly
+            # This is much more robust on Linux/Robot OS
+            try:
+                import subprocess
+                # Try spd-say first (usually installed on Ubuntu/ROS)
+                subprocess.run(["spd-say", text])
+            except Exception:
+                pass
 
         self._speech_playing.clear()
-        # 等待动画线程结束，但设置超时避免无限阻塞
         anim_thread.join(timeout=1.0)
+        
+        # 4. POST-SPEAK DELAY: Ensure audio is done before listening again
         time.sleep(self.listen_delay)
         self._can_listen.set()
 
@@ -390,11 +408,13 @@ class VoiceCandyChat:
                     self.speak(
                         "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
                     )
+                    time.sleep(2)  # Wait 2 seconds before exiting
                     return
 
                 if user_text.lower() in {"quit", "exit", "goodbye", "bye", "see you", "see ya"}:
                     print("Exiting voice chat...")
                     self.speak("Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!")
+                    time.sleep(2)  # Wait 2 seconds before exiting
                     return
 
                 response = self.chat.get_response(user_text)
