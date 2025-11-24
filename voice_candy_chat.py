@@ -226,11 +226,24 @@ class VoiceCandyChat:
         self.engine.setProperty("volume", 0.85)
         try:
             voices = self.engine.getProperty("voices")
+            # Prefer male voices: Daniel, Fred, or other male voices
+            # Avoid female voices (Samantha, Victoria, etc.)
+            male_voice_found = False
             for voice in voices:
-                if "en" in voice.id.lower() or "samantha" in voice.name.lower() or "alex" in voice.name.lower():
+                voice_name_lower = voice.name.lower()
+                voice_id_lower = voice.id.lower()
+                # Look for male voices: Daniel, Fred, Alex, etc.
+                if any(male in voice_name_lower for male in ["daniel", "fred", "alex", "male"]):
                     self.engine.setProperty("voice", voice.id)
+                    male_voice_found = True
+                    print(f"Selected male voice: {voice.name}")
                     break
-        except Exception:
+            
+            if not male_voice_found:
+                print("Warning: No male voice found in pyttsx3, using default voice")
+                print("Note: On macOS, we use 'say -v Daniel' command instead")
+        except Exception as e:
+            print(f"Voice selection error: {e}")
             pass
 
     def speak(self, text: str):
@@ -256,20 +269,48 @@ class VoiceCandyChat:
         anim_thread = threading.Thread(target=animate, daemon=True)
         anim_thread.start()
 
-        try:
-            # 2. PRIMARY TTS: Try pyttsx3
-            self.engine.say(text)
-            self.engine.runAndWait()
-        except Exception as e:
-            print(f"pyttsx3 failed ({e}), trying system fallback...")
-            # 3. FALLBACK TTS: If pyttsx3 skips/fails, use system command directly
-            # This is much more robust on Linux/Robot OS
+        tts_success = False
+        import subprocess
+        import platform
+        
+        # On macOS, directly use 'say' command with Daniel voice (male, more reliable)
+        if platform.system() == "Darwin":  # macOS
             try:
-                import subprocess
-                # Try spd-say first (usually installed on Ubuntu/ROS)
-                subprocess.run(["spd-say", text])
-            except Exception:
-                pass
+                # Use macOS native 'say' command with Daniel voice (male, British English)
+                # Daniel is a male voice available on macOS
+                subprocess.run(["say", "-v", "Daniel", text], check=True)
+                tts_success = True
+            except subprocess.CalledProcessError as e:
+                print(f"macOS 'say' command failed: {e}")
+                # Try Fred as fallback (male, American English)
+                try:
+                    subprocess.run(["say", "-v", "Fred", text], check=True)
+                    tts_success = True
+                    print("Used Fred voice as fallback")
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"macOS 'say' command error: {e}")
+                # Fallback to pyttsx3 if say fails
+                try:
+                    self.engine.stop()
+                    self.engine.say(text)
+                    self.engine.runAndWait()
+                    tts_success = True
+                except Exception as e2:
+                    print(f"pyttsx3 fallback also failed: {e2}")
+        else:
+            # For non-macOS systems, use pyttsx3
+            try:
+                self.engine.stop()
+                self.engine.say(text)
+                self.engine.runAndWait()
+                tts_success = True
+            except Exception as e:
+                print(f"pyttsx3 failed: {e}")
+        
+        if not tts_success:
+            print(f"Warning: TTS failed for text: {text}")
 
         self._speech_playing.clear()
         anim_thread.join(timeout=1.0)
