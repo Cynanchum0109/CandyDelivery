@@ -37,3 +37,7 @@ openai_api_key
 *.tmp
 *.temp
 
+# YOLO model files (too large for git)
+*.pt
+yolov8*.pt
+

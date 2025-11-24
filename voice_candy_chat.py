@@ -13,7 +13,6 @@ import sys
 import time
 import tempfile
 import threading
-import json
 from datetime import datetime
 from openai import OpenAI
 
@@ -163,23 +162,6 @@ class CandyDeliveryChat:
         greeting = "Hi! I'm the candy robot. Need a tasty break?"
         self.add_assistant_message(greeting)
         return greeting
-    
-    def save_conversation(self, filename=None):
-        """Save conversation log"""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"conversation_{timestamp}.json"
-        
-        data = {
-            "session_start": self.session_start_time.isoformat(),
-            "session_end": datetime.now().isoformat(),
-            "conversation": self.conversation_history
-        }
-        
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        
-        print(f"\nConversation saved to: {filename}")
 
 # ===================================================================== #
 #                         VOICE CANDY CHAT                              #
@@ -380,45 +362,19 @@ class VoiceCandyChat:
         print("=" * 60)
         print()
         
-        # 等待 WebSocket 连接
-        print("Waiting for face.html to connect...")
-        print("Please open face.html in your browser.")
-        print()
-        
-        # 等待连接，最多等待 60 秒
-        if not self.face.wait_for_connection(timeout=60):
-            print("Warning: Face window not connected after 60 seconds.")
-            print("Continuing anyway, but face animations may not work.")
-            print()
+        # Assume face.html is already open, just check connection briefly
+        print("Checking face.html connection...")
+        if not self.face.wait_for_connection(timeout=2):
+            print("Note: Face window not connected. Face animations may not work.")
+            print("(Make sure face.html is open in your browser)")
         else:
-            print("✓ Face window connected successfully!")
-            print()
-        
-        # 等待用户按 's' 键开始
-        print("=" * 60)
-        print("Ready to start!")
-        print("Press 's' + Enter to start the conversation.")
-        print("Press 'q' + Enter to exit at any time.")
-        print("=" * 60)
+            print("✓ Face window connected!")
         print()
         
-        while True:
-            try:
-                user_input = input("> ").strip().lower()
-                if user_input == 's':
-                    break
-                elif user_input == 'q':
-                    print("Exiting...")
-                    return
-                else:
-                    print("Please press 's' to start or 'q' to quit.")
-            except (EOFError, KeyboardInterrupt):
-                print("\nExiting...")
-                return
-        
-        print()
+        # Start conversation automatically
         print("Starting conversation...")
         print("Speak or type your responses. Type 'quit' to exit.")
+        print("Press 'q' + Enter at any time to exit.")
         print("=" * 60)
         print()
 
@@ -450,8 +406,6 @@ class VoiceCandyChat:
             # 清理资源
             try:
                 self.face.send("idle")
-                # 保存对话记录
-                self.chat.save_conversation()
             except Exception:
                 pass
 

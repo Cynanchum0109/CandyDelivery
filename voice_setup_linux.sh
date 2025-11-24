@@ -49,8 +49,7 @@ install_python_packages() {
         pyttsx3 \
         pyaudio \
         faster-whisper \
-        opencv-python \
-        numpy
+        websockets
 }
 
 main() {
