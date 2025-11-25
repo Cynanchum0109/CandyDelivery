@@ -7,6 +7,7 @@ class FaceServer:
         self.websocket = None
         self.loop = None
         self._connected = threading.Event()
+        self._exit_requested = threading.Event()  # 退出请求标志
         self.server_thread = threading.Thread(target=self.start_server, daemon=True)
         self.server_thread.start()
 
@@ -14,8 +15,24 @@ class FaceServer:
         print("Face window connected.")
         self.websocket = websocket
         self._connected.set()  # 标记已连接
-        while True:
-            await asyncio.sleep(0.1)
+        try:
+            async for message in websocket:
+                # 接收来自前端的信息
+                if message == "EXIT" or message == "exit":
+                    print("Exit requested from web interface.")
+                    self._exit_requested.set()
+        except websockets.exceptions.ConnectionClosed:
+            print("Face window disconnected.")
+        finally:
+            self._connected.clear()
+    
+    def is_exit_requested(self):
+        """检查是否收到退出请求"""
+        return self._exit_requested.is_set()
+    
+    def clear_exit_request(self):
+        """清除退出请求标志（用于重置）"""
+        self._exit_requested.clear()
     
     def is_connected(self):
         """检查 WebSocket 是否已连接"""

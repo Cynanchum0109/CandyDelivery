@@ -68,6 +68,29 @@
       color: #3b3b3b;
       text-align: center;
       border-bottom: 1px solid #e5e7eb;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .exit-button {
+      background: #ef4444;
+      color: white;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .exit-button:hover {
+      background: #dc2626;
+    }
+
+    .exit-button:active {
+      background: #b91c1c;
     }
 
     .messages {
@@ -145,7 +168,10 @@
 
     <!-- SMALL CHAT -->
     <div class="chat-panel">
-      <div class="chat-header">Conversation</div>
+      <div class="chat-header">
+        <span>Conversation</span>
+        <button class="exit-button" id="exit-button">Exit</button>
+      </div>
       <div class="messages" id="messages"></div>
     </div>
   </div>
@@ -153,8 +179,8 @@
   <script>
     const robotStates = {
       idle: "face/face1.png",
-      speaking: "face/face2.png",
-      listening: "face/mic.jpg",
+      speaking: "face/speaking.gif",
+      listening: "face/listening.png",
       thinking: "face/face3.png",
       surprised: "face/face3.png"
     };
@@ -162,11 +188,24 @@
     const robotImage = document.getElementById("robot-face");
     const faceLabel = document.getElementById("face-label");
     const messagesDiv = document.getElementById("messages");
+    const exitButton = document.getElementById("exit-button");
+
+    let currentState = null;
 
     function setRobotState(state) {
       if (robotStates[state]) {
-        robotImage.src = robotStates[state];
-        faceLabel.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+        // If switching to a new state, update the image
+        if (currentState !== state) {
+          const newSrc = robotStates[state];
+          // For GIF files, force reload to restart animation
+          if (newSrc.endsWith('.gif')) {
+            robotImage.src = newSrc + '?t=' + Date.now();
+          } else {
+            robotImage.src = newSrc;
+          }
+          currentState = state;
+          faceLabel.textContent = state.charAt(0).toUpperCase() + state.slice(1);
+        }
       }
     }
 
@@ -217,9 +256,18 @@
       }
     };
 
+    // 退出按钮点击事件
+    exitButton.addEventListener("click", () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send("EXIT");
+        exitButton.textContent = "Exiting...";
+        exitButton.disabled = true;
+      }
+    });
+
     window.onload = () => {
       setRobotState("idle");
-      addMessage("robot", "Welcome! I’ll show our conversation here.");
+      addMessage("robot", "Welcome! I'll show our conversation here.");
     };
   </script>
 </body>
