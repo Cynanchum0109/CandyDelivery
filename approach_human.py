@@ -199,7 +199,7 @@ try:
             else:
                 if max_height < TARGET_HEIGHT:
                     status_text = f"Human detected (h={max_height}) → MOVE FORWARD"
-                    send_vel(-0.20)
+                    send_vel(0.20)
                 else:
                     status_text = f"Human detected (h={max_height}) → CLOSE ENOUGH → STOP"
                     send_vel(0.0)

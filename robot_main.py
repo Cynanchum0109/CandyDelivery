@@ -68,7 +68,7 @@ def move_backward(duration=5.0, velocity=0.25, update_interval=0.5):
                 break
             
             # Send backward velocity command
-            send_vel(velocity)
+            send_vel(-velocity)
             print(f"Moving backward... {remaining:.1f}s remaining")
             
             # Sleep for update interval, but don't exceed remaining time
@@ -328,7 +328,7 @@ class HumanApproach:
                         
                         if not height_ok or not position_ok:
                             # Keep approaching: either height not in range, or person too high on screen
-                            target_velocity = -0.25
+                            target_velocity = 0.25
                             
                             if max_height < self.target_height:
                                 status_text = f"Human detected (h={max_height}) → APPROACHING (too small)"
