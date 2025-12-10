@@ -8,204 +8,325 @@ from ultralytics import YOLO
 from insightface.app import FaceAnalysis
 import joblib
 
+# Constants
 FACE_SKIP_FRAMES = 5
 HISTORY_LEN = 15
 
 class FeatureProcessorLive:
+    """
+    Real-time version of the offline FeatureProcessor used in video_processing.py.
+    Extracts the same CSV features, but does not write CSV.
+    Provides:
+        - get_state(): full feature vector (dict)
+        - get_prediction(): (label, prob) if model enabled
+    """
+
     def __init__(self, cap, use_prediction=False):
-        """
-        Real-time YOLO + InsightFace feature extraction.
-        
-        Args:
-            cap: shared VideoCapture
-            use_prediction: If True, load MLP+scaler and compute prediction.
-                            If False, only extract features and print them.
-        """
         self.cap = cap
         self.running = False
         self.frame_count = 0
 
-        # Store whether we want MLP prediction
-        self.use_prediction = use_prediction
-
-        # ---------------------------------------
-        # LOAD YOLO, InsightFace
-        # ---------------------------------------
+        # YOLO and Face models
         self.yolo = YOLO("yolov8n-pose.pt")
         self.face_app = FaceAnalysis(name='buffalo_s', providers=['CPUExecutionProvider'])
         self.face_app.prepare(ctx_id=0, det_size=(320, 320))
 
+        # Buffers for motion energy
         self.nose_hist = deque(maxlen=HISTORY_LEN)
         self.wrist_hist = deque(maxlen=HISTORY_LEN)
 
-        # ---------------------------------------
-        # OPTIONAL: LOAD DISENGAGEMENT MODEL
-        # ---------------------------------------
-        if self.use_prediction:
-            print("Loading Scikit-Learn Brain...")
+        # Prediction model (optional)
+        self.use_prediction = use_prediction
+        if use_prediction:
             try:
                 self.model = joblib.load("robot_mlp_sklearn.pkl")
                 self.scaler = joblib.load("robot_scaler.pkl")
-                print("MLP model loaded.")
+                print("✓ Loaded disengagement model.")
             except Exception as e:
-                print(f"⚠ MLP model could not be loaded: {e}")
-                print("Running WITHOUT prediction.")
+                print("⚠ Could not load model:", e)
                 self.use_prediction = False
                 self.model = None
                 self.scaler = None
         else:
-            print("Running with feature extraction ONLY (no prediction).")
             self.model = None
             self.scaler = None
 
-        # Last prediction
-        self.latest_prediction = None   # None when disabled
-        self.latest_prob = None
-
         # Shared state
         self.state_lock = threading.Lock()
-        self.latest_state = {
-            "yaw": 0.0, "pitch": 0.0, "roll": 0.0,
-            "is_looking": 0,
-            "smile": 0.0, "eyes": 0.0, "mouth": 0.0, "brow": 0.0,
-            "face_vis_yolo": 0.0,
-            "shake": 0.0,
-            "nod": 0.0,
-            "waving": 0,
-            "shoulder_ratio": 0.0,
+        self.latest_state = self._empty_state()
+
+        # Prediction outputs
+        self.latest_prediction = None
+        self.latest_prob = None
+
+    # -----------------------------------------------------
+    #   Full Feature State Structure
+    # -----------------------------------------------------
+    def _empty_state(self):
+        return {
+            "frame": 0,
+            "timestamp": 0.0,
+
+            # Body metrics
             "slouch_ratio": 0.0,
+            "shoulder_width_ratio": 0.0,
+            "engagement_zone": "Unknown",
+            "dist_proxy": 0.0,
+
+            # Visibility
+            "face_vis_yolo": 0.0,
+            "face_vis_insight": 0.0,
+
+            # Head pose
+            "head_yaw": 0.0,
+            "head_pitch": 0.0,
+            "head_roll": 0.0,
+            "is_looking_at_robot": 0,
+
+            # AU features
+            "AU12_Smile": 0.0,
+            "AU45_EyeOpen": 0.0,
+            "AU25_MouthOpen": 0.0,
+            "AU01_BrowRaise": 0.0,
+
+            # Motion / Gesture
+            "nod_energy": 0.0,
+            "shake_energy": 0.0,
+            "is_waving": 0,
+
+            # Label (only used for prediction mode)
+            "engage_label": None,
         }
 
-    def update_body_hist(self, nose, lw, rw):
-        self.nose_hist.append(nose)
-        self.wrist_hist.append((lw, rw))
+    # -----------------------------------------------------
+    #   Helpers
+    # -----------------------------------------------------
+    def _compute_au_106(self, landmarks):
+        """Extract AU12, AU45, AU25, AU01 from InsightFace 106 landmarks."""
+        def dist(i, j):
+            return np.linalg.norm(landmarks[i] - landmarks[j])
 
-    def get_nod_shake(self):
-        if len(self.nose_hist) < 5: 
-            return 0.0, 0.0
-        arr = np.array(self.nose_hist)
-        return float(np.std(arr[:, 0])), float(np.std(arr[:, 1]))
+        face_w = dist(1, 17)
+        if face_w == 0: face_w = 1.0
 
-    def get_action_units(self, landmarks):
-        def dist(a, b):
-            return np.linalg.norm(landmarks[a] - landmarks[b])
-        face_w = dist(1, 17) or 1.0
         smile = dist(52, 61) / face_w
-        eye = (dist(37, 41) + dist(89, 93)) / (2 * face_w)
+        eyes = (dist(37, 41) + dist(89, 93)) / (2 * face_w)
         mouth = dist(63, 56) / face_w
         brow = dist(37, 24) / face_w
-        return smile, eye, mouth, brow
 
+        return smile, eyes, mouth, brow
+
+    def _compute_temporal(self, nose, l_wrist, r_wrist):
+        """Update for nod/shake and waving energy."""
+        self.nose_hist.append(nose)
+        self.wrist_hist.append((l_wrist, r_wrist))
+
+        # nod / shake
+        if len(self.nose_hist) >= 5:
+            arr = np.array(self.nose_hist)
+            nod = float(np.std(arr[:, 1]))   # vertical
+            shake = float(np.std(arr[:, 0])) # horizontal
+        else:
+            nod = shake = 0.0
+
+        # waving detection
+        if len(self.wrist_hist) >= 5:
+            hist = np.array(self.wrist_hist)
+            l_wrist_var = np.std(hist[:, 0, 1])
+            r_wrist_var = np.std(hist[:, 1, 1])
+            is_waving = int(l_wrist_var > 15 or r_wrist_var > 15)
+        else:
+            is_waving = 0
+
+        return nod, shake, is_waving
+
+    # -----------------------------------------------------
+    #   Real-Time Feature Processing
+    # -----------------------------------------------------
     def process_frame(self, frame):
-        """Process a single frame for features and optional prediction."""
+
+        # -------------------------
+        # FAST BODY LOOP (every frame)
+        # -------------------------
         yolo_r = self.yolo(frame, verbose=False)[0]
 
-        if yolo_r.keypoints is not None and len(yolo_r.keypoints.data) > 0:
-            kpts = yolo_r.keypoints.data[0].cpu().numpy()
+        slouch = shoulder_ratio = face_vis_yolo = 0.0
+        zone = "Unknown"
+        dist_proxy = 0.0
+        nod = shake = is_waving = 0.0
 
-            # Basic body metrics
+        if yolo_r.keypoints is not None and len(yolo_r.keypoints.data) > 0:
+
+            kpts = yolo_r.keypoints.data[0].cpu().numpy()
+            box = yolo_r.boxes.data[0].cpu().numpy()
+
+            # Keypoints
             l_sh, r_sh = kpts[5][:2], kpts[6][:2]
             l_hip, r_hip = kpts[11][:2], kpts[12][:2]
             nose = kpts[0][:2]
+            l_wrist, r_wrist = kpts[9][:2], kpts[10][:2]
+
+            # Person height
+            person_h = max(box[3] - box[1], 1)
+
+            # Slouch
             torso_h = abs(l_hip[1] - l_sh[1])
-            shoulder_w = np.linalg.norm(l_sh - r_sh)
-            person_h = max((yolo_r.boxes.data[0][3] - yolo_r.boxes.data[0][1]), 1)
-
             slouch = torso_h / person_h
-            shoulder_ratio = shoulder_w / person_h
 
-            # Temporal
+            # Shoulder width ratio
+            shoulder_width = np.linalg.norm(l_sh - r_sh)
+            shoulder_ratio = shoulder_width / person_h
+
+            # Proxemics proxy
+            dist_proxy = 1000 / (torso_h + 1)
+
+            if dist_proxy < 3:
+                zone = "Intimate"
+            elif dist_proxy < 6:
+                zone = "Social"
+            else:
+                zone = "Public"
+
+            # YOLO face visibility
+            face_vis_yolo = sum(1 for p in kpts[0:5] if p[2] > 0.5) / 5.0
+
+            # Temporal energies
             body_center = (l_sh + r_sh) / 2
-            self.update_body_hist(nose - body_center, kpts[9][:2], kpts[10][:2])
-            nod, shake = self.get_nod_shake()
+            rel_nose = nose - body_center
+            nod, shake, is_waving = self._compute_temporal(rel_nose, l_wrist, r_wrist)
 
-            # Face visibility
-            face_vis = sum(1 for p in kpts[0:5] if p[2] > 0.5) / 5.0
-        else:
-            slouch = shoulder_ratio = nod = shake = face_vis = 0.0
-
-        yaw = 0.0
-        pitch = 0.0
-        roll = 0.0
-        smile = 0.0
-        eyes = 0.0
-        mouth = 0.0
-        brow = 0.0
-        is_looking = 0
-        # Slow face loop
-        smile = eyes = mouth = brow = 0.0
+        # -------------------------
+        # SLOW FACE LOOP (every N frames)
+        # -------------------------
         yaw = pitch = roll = 0.0
         is_looking = 0
+        smile = eyes = mouth = brow = 0.0
+        face_vis_insight = 0.0
 
         if self.frame_count % FACE_SKIP_FRAMES == 0:
+
             faces = self.face_app.get(frame)
+
             if faces:
                 f = max(faces, key=lambda x: (x.bbox[2]-x.bbox[0])*(x.bbox[3]-x.bbox[1]))
                 pose = f.pose
                 pitch, yaw, roll = float(pose[0]), float(pose[1]), float(pose[2])
 
-                is_looking = 1 if abs(yaw) < 15 and abs(pitch) < 15 else 0
+                # Looking check
+                is_looking = int(abs(yaw) < 15 and abs(pitch) < 15)
 
+                # InsightFace visibility score
+                if hasattr(f, "det_score"):
+                    face_vis_insight = float(f.det_score)
+                else:
+                    face_vis_insight = 1.0
+
+                # AU features
                 if f.landmark_2d_106 is not None:
-                    smile, eyes, mouth, brow = self.get_action_units(f.landmark_2d_106)
+                    smile, eyes, mouth, brow = self._compute_au_106(f.landmark_2d_106)
 
-        # Save state
+        timestamp_ms = time.time() * 1000.0
+
+        # ---------------------------------
+        # Assemble state vector
+        # ---------------------------------
+        new_state = {
+            "frame": self.frame_count,
+            "timestamp": timestamp_ms,
+
+            "slouch_ratio": slouch,
+            "shoulder_width_ratio": shoulder_ratio,
+            "engagement_zone": zone,
+            "dist_proxy": dist_proxy,
+
+            "face_vis_yolo": face_vis_yolo,
+            "face_vis_insight": face_vis_insight,
+
+            "head_yaw": yaw,
+            "head_pitch": pitch,
+            "head_roll": roll,
+            "is_looking_at_robot": is_looking,
+
+            "AU12_Smile": smile,
+            "AU45_EyeOpen": eyes,
+            "AU25_MouthOpen": mouth,
+            "AU01_BrowRaise": brow,
+
+            "nod_energy": nod,
+            "shake_energy": shake,
+            "is_waving": is_waving,
+
+            "engage_label": None,
+        }
+
+        # Save state thread-safe
         with self.state_lock:
-            self.latest_state.update({
-                "yaw": yaw, "pitch": pitch, "roll": roll,
-                "is_looking": is_looking,
-                "smile": smile, "eyes": eyes, "mouth": mouth, "brow": brow,
-                "face_vis_yolo": face_vis,
-                "nod": nod, "shake": shake,
-                "shoulder_ratio": shoulder_ratio,
-                "slouch_ratio": slouch,
-            })
+            self.latest_state = new_state
 
-        # Debug print (ALWAYS ON)
-        print("FEATURES:", self.latest_state)
+        # --------------------------------
+        # Optional: Prediction
+        # --------------------------------
+        if self.use_prediction and self.scaler and self.model:
 
-        # ---------------------------------------
-        # OPTIONAL PREDICTION PIPELINE
-        # ---------------------------------------
-        if self.use_prediction:
-            features_vector = np.array([
-                slouch,
-                shoulder_ratio,
-                face_vis,
-                is_looking,
-                yaw, pitch, roll,
-                smile, eyes, mouth, brow,
-                nod, shake,
+                        # Encode zone from string -> numeric
+            zone_map = {"Public": 0, "Social": 1, "Intimate": 2}
+            zone_code = zone_map.get(zone, 0)
+
+            vec = np.array([
+                slouch,                # slouch_ratio
+                shoulder_ratio,        # shoulder_width_ratio
+                zone_code,             # engagement_zone
+                dist_proxy,            # dist_proxy
+                face_vis_yolo,         # face_vis_yolo
+                face_vis_insight,      # face_vis_insight
+                yaw,                   # head_yaw
+                pitch,                 # head_pitch
+                roll,                  # head_roll
+                is_looking,            # is_looking_at_robot
+                smile,                 # AU12_Smile
+                eyes,                  # AU45_EyeOpen
+                mouth,                 # AU25_MouthOpen
+                brow,                  # AU01_BrowRaise
+                nod,                   # nod_energy
+                shake,                 # shake_energy
+                is_waving,             # is_waving
             ]).reshape(1, -1)
 
-            scaled = self.scaler.transform(features_vector)
-            pred_prob = self.model.predict_proba(scaled)[0][1]
-            pred_label = int(pred_prob > 0.5)
+
+            scaled = self.scaler.transform(vec)
+            prob = self.model.predict_proba(scaled)[0][1]
+            label = int(prob > 0.5)
 
             with self.state_lock:
-                self.latest_prediction = pred_label
-                self.latest_prob = float(pred_prob)
+                self.latest_prediction = label
+                self.latest_prob = float(prob)
+
         else:
-            # No prediction
             with self.state_lock:
                 self.latest_prediction = None
                 self.latest_prob = None
 
+    # -----------------------------------------------------
+    #   Public API
+    # -----------------------------------------------------
     def get_state(self):
         with self.state_lock:
             return dict(self.latest_state)
 
     def get_prediction(self):
-        """If prediction disabled, return (None, None)."""
         with self.state_lock:
             return self.latest_prediction, self.latest_prob
 
+    # -----------------------------------------------------
+    #   Thread Loop
+    # -----------------------------------------------------
     def _loop(self):
         while self.running:
             ret, frame = self.cap.read()
             if not ret:
                 time.sleep(0.01)
                 continue
+
             self.process_frame(frame)
             self.frame_count += 1
 
