@@ -15,6 +15,9 @@ import tempfile
 import threading
 from datetime import datetime
 from openai import OpenAI
+import webbrowser
+from pathlib import Path
+
 
 
 def ensure_dependencies():
@@ -61,6 +64,12 @@ CONFIG = {
 # Unified conversation prompt
 SYSTEM_PROMPT = """You are a friendly candy delivery robot providing free candy to students.
 
+Available candies in your basket:
+- Snickers
+- Twix
+- MilkyWay
+- 3 Musketeers
+
 Your personality:
 - Warm, friendly, and encouraging
 - Natural and conversational (not robotic or overly enthusiastic)
@@ -68,16 +77,19 @@ Your personality:
 
 Your goals:
 1. Have natural, engaging conversations with students
-2. Occasionally mention the free candy available (in the basket)
-3. Ask about their studies, how they're feeling, or their day
-4. Provide encouragement and support for students.
-5. Keep the conversation flowing naturally
+3. Occasionally mention the free candy available (Snickers, Twix, MilkyWay, or 3 Musketeers)
+4. Ask about their studies, how they're feeling, or their day
+5. Provide encouragement and support for students.
+6. Keep the conversation flowing naturally
 
 Guidelines:
 - Keep responses short: around 6 words (~2 seconds of speech)
 - End most responses with a short question to keep the conversation going
 - Be conversational, not salesy
 - Show genuine interest in the student
+- Start your conversation by encouraging people to take some candy (e.g., "Feel free to take some candy!")
+- When mentioning candy, you can mention specific brands like Snickers, Twix, MilkyWay, or 3 Musketeers
+- Actively encourage students to take candy throughout the conversation in a friendly, natural way
 
 """
 
@@ -159,7 +171,7 @@ class CandyDeliveryChat:
     
     def start_greeting(self):
         """Start greeting"""
-        greeting = "Hi! I'm the candy robot. Need a tasty break?"
+        greeting = "Hi! I'm the candy robot. Need a tasty break? There are some candies in the basket below!"
         self.add_assistant_message(greeting)
         return greeting
 
@@ -169,22 +181,45 @@ class CandyDeliveryChat:
 
 
 class VoiceCandyChat:
-    def __init__(self):
+    def __init__(self, open_face_window=True, face_server=None):
+        """
+        Initialize voice chat system.
+        
+        Args:
+            open_face_window: If True, automatically open face.html in browser. 
+                            If False, assume window is already open (default: True).
+            face_server: Optional FaceServer instance to reuse. If None, creates a new one.
+        """
         self.chat = CandyDeliveryChat()
         self.recognizer = sr.Recognizer()
-        self.recognizer.pause_threshold = 0.6
-        self.recognizer.phrase_threshold = 0.1
-        self.recognizer.non_speaking_duration = 0.3
+        # Increased pause threshold to allow longer pauses in speech (1.5 seconds)
+        # This prevents cutting off mid-sentence when user pauses to think
+        self.recognizer.pause_threshold = 1.5
+        # Increased phrase threshold for better detection
+        self.recognizer.phrase_threshold = 0.3
+        # Increased non-speaking duration to wait longer before stopping
+        self.recognizer.non_speaking_duration = 0.8
         self.microphone = sr.Microphone()
         self.engine = pyttsx3.init()
         # WebSocket face server (replaces FaceDisplay)
-        self.face = FaceServer()
+        # Reuse provided face_server or create new one
+        if face_server is not None:
+            self.face = face_server
+        else:
+            self.face = FaceServer()
         self._speech_playing = threading.Event()
         self._exit_event = threading.Event()
         self._can_listen = threading.Event()
         self._can_listen.set()
         self._exit_listener = threading.Thread(target=self._monitor_exit_key, daemon=True)
         self._exit_listener.start()
+        # Start keyboard listener for spacebar disengage
+        # Note: On macOS, pynput requires main thread, so we use a safer approach
+        self._keyboard_listener = None
+        self._start_keyboard_listener()
+        # Only open face window if requested (default behavior for standalone use)
+        if open_face_window:
+            self._open_face_window()
         self.listen_delay = float(os.getenv("VOICE_LISTEN_DELAY", "2.0"))
         model_name = os.getenv("WHISPER_MODEL", "small")
         device = os.getenv("WHISPER_DEVICE", "auto")
@@ -217,6 +252,40 @@ class VoiceCandyChat:
                 print("Tip: download models ahead of time or choose a smaller model (e.g. 'base').")
                 sys.exit(1)
         self.configure_tts()
+
+
+    def _open_face_window(self):
+        """
+        Open face.html automatically in the default browser.
+        Assumes face.html is in the same directory as this file.
+        """
+        try:
+            base_dir = Path(__file__).resolve().parent
+            html_path = (base_dir / "face.html").resolve()
+            if html_path.exists():
+                url = html_path.as_uri()
+                webbrowser.open(url, new=1)  # new tab / window
+                print(f"Opened face UI at {url}")
+            else:
+                print("Warning: face.html not found; cannot auto-open UI.")
+        except Exception as e:
+            print(f"Could not open face.html automatically: {e}")
+
+
+    def _send_ui_message(self, sender: str, text: str):
+        """
+        Send a conversation message to the web UI over WebSocket.
+        sender: 'user' or 'robot'
+        """
+        if not text:
+            return
+        prefix = "USER:" if sender.lower() == "user" else "ROBOT:"
+        # avoid newlines breaking formatting
+        safe_text = text.replace("\n", " ").strip()
+        try:
+            self.face.send(f"{prefix}{safe_text}")
+        except Exception as e:
+            print(f"Warning: failed to send UI message: {e}")
 
     def configure_tts(self):
         # Moderate speaking speed for clarity
@@ -251,6 +320,9 @@ class VoiceCandyChat:
             return
         
         print(f"Robot: {text}")
+        # Send robot message to web UI
+        self._send_ui_message("robot", text)
+
         
         # 1. SAFETY DELAY: Give the microphone time to release the audio device
         time.sleep(0.5)
@@ -330,10 +402,12 @@ class VoiceCandyChat:
             
             segments, _ = self.whisper_model.transcribe(
                 tmp_path,
-                beam_size=1,
-                vad_filter=True,
+                beam_size=5,  # Increased from 1 to 5 for better accuracy
+                vad_filter=True,  # Voice Activity Detection to filter out silence
                 language="en",
                 task="transcribe",
+                temperature=0.0,  # Use deterministic decoding for consistency
+                best_of=5,  # Try multiple decodings and pick the best
             )
             transcript = " ".join(seg.text.strip() for seg in segments).strip()
         finally:
@@ -361,13 +435,19 @@ class VoiceCandyChat:
         try:
             with self.microphone as source:
                 print("Listening...")
-                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
-                audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=None)
+                # Increase ambient noise adjustment time for better accuracy
+                self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
+                # Set phrase_time_limit to 10 seconds to allow reasonable conversations
+                # but prevent infinite recording
+                audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=10)
 
             text = self._transcribe_with_whisper(audio)
             if text:
                 print(f"You (voice): {text}")
+                # Send user message to web UI
+                self._send_ui_message("user", text)
                 return text
+
             print("Whisper could not transcribe audio. Please repeat or type.")
         except sr.WaitTimeoutError:
             print("No speech detected. Please try again or type your message.")
@@ -414,6 +494,77 @@ class VoiceCandyChat:
                 self._can_listen.set()
                 break
 
+    def _start_keyboard_listener(self):
+        """启动键盘监听器（使用安全的方式，避免macOS线程问题）"""
+        import platform
+        
+        # On macOS, pynput has threading issues with TSM API calls in background threads
+        # We'll disable keyboard monitoring on macOS to prevent crashes
+        if platform.system() == "Darwin":  # macOS
+            print("Note: Spacebar disengage disabled on macOS due to threading limitations.")
+            print("     Use 'q' + Enter to exit instead.")
+            self._keyboard_listener = None
+            return
+        
+        # For non-macOS systems, use standard approach
+        def _monitor_spacebar():
+            """监听空格键，按下时触发退出流程（disengage）"""
+            try:
+                # Try to use pynput for cross-platform keyboard listening
+                from pynput import keyboard
+            except ImportError:
+                # If pynput is not available, try keyboard library
+                try:
+                    import keyboard as kb
+                    # Use keyboard library (simpler, but may require sudo on Linux)
+                    while not self._exit_event.is_set():
+                        try:
+                            if kb.is_pressed('space'):
+                                print("\n[Spacebar pressed] Initiating disengage...")
+                                self._exit_event.set()
+                                self._speech_playing.clear()
+                                try:
+                                    self.engine.stop()
+                                except Exception:
+                                    pass
+                                self._can_listen.set()
+                                break
+                            time.sleep(0.1)
+                        except Exception as e:
+                            print(f"Keyboard monitoring error: {e}")
+                            time.sleep(0.5)
+                    return
+                except ImportError:
+                    print("Warning: Neither 'pynput' nor 'keyboard' library found.")
+                    print("Spacebar disengage will not work. Install with: pip install pynput")
+                    return
+            
+            # Use pynput for keyboard listening
+            def on_press(key):
+                try:
+                    if key == keyboard.Key.space:
+                        if not self._exit_event.is_set():
+                            print("\n[Spacebar pressed] Initiating disengage...")
+                            self._exit_event.set()
+                            self._speech_playing.clear()
+                            try:
+                                self.engine.stop()
+                            except Exception:
+                                pass
+                            self._can_listen.set()
+                            return False  # Stop listener
+                except Exception as e:
+                    print(f"Key press error: {e}")
+            
+            try:
+                with keyboard.Listener(on_press=on_press) as listener:
+                    listener.join()
+            except Exception as e:
+                print(f"Keyboard listener error: {e}")
+        
+        self._keyboard_listener = threading.Thread(target=_monitor_spacebar, daemon=True)
+        self._keyboard_listener.start()
+
 
     def run(self):
         print("=" * 60)
@@ -434,6 +585,7 @@ class VoiceCandyChat:
         print("Starting conversation...")
         print("Speak or type your responses. Type 'quit' to exit.")
         print("Press 'q' + Enter at any time to exit.")
+        print("Press SPACEBAR to disengage (exit with goodbye message).")
         print("=" * 60)
         print()
 
@@ -442,6 +594,15 @@ class VoiceCandyChat:
 
         try:
             while True:
+                # 检查 WebSocket 退出请求（无需新线程，在主循环中检查）
+                if self.face.is_exit_requested():
+                    print("Exit requested from web interface.")
+                    self.speak(
+                        "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
+                    )
+                    time.sleep(2)  # Wait 2 seconds before exiting
+                    return
+                
                 user_text = ""
                 while not user_text:
                     user_text = self.listen()
