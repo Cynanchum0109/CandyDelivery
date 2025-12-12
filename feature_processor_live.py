@@ -292,8 +292,11 @@ class FeatureProcessorLive:
                 is_waving,             # is_waving
             ]).reshape(1, -1)
 
-
-            scaled = self.scaler.transform(vec)
+            # Suppress sklearn warning about feature names
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
+                scaled = self.scaler.transform(vec)
             prob = self.model.predict_proba(scaled)[0][1]
             label = int(prob > 0.5)
 

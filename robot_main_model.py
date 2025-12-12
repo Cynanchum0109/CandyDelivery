@@ -91,7 +91,7 @@ class HumanApproach:
     """Human detection and approach module."""
     
     def __init__(self, target_height=280, fps_target=30, camera_id=0, 
-                 cap=None, video_writer=None, move_duration=0.5):
+                 cap=None, move_duration=0.5):
         self.target_height = target_height
         self.fps_target = fps_target
         self.camera_id = camera_id
@@ -99,9 +99,7 @@ class HumanApproach:
         self.human_reached = False
         self.cap = cap  # Can be passed from main program
         self.model = None
-        self.video_writer = video_writer  # Can be passed from main program
         self._own_cap = False  # Track if we own the camera
-        self._own_writer = False  # Track if we own the writer
         self.move_duration = move_duration  # Duration to maintain movement (seconds)
         self.last_move_time = 0
         self.current_velocity = 0.0
@@ -200,9 +198,6 @@ class HumanApproach:
                 if not ret:
                     time.sleep(0.1)
                     continue
-                
-                # Note: Video recording is handled by background thread in main()
-                # No need to write here to avoid duplicate writes
                 
                 # Put frame in detection queue
                 if not frame_queue.full():
@@ -371,12 +366,6 @@ class HumanApproach:
                     cv2.putText(annotated_frame, status_text, (10, 60),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
-                    # Add recording indicator
-                    if self.video_writer:
-                        cv2.putText(annotated_frame, "REC", (640 - 80, 30),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                        cv2.circle(annotated_frame, (640 - 30, 30), 8, (0, 0, 255), -1)
-                    
                     cv2.imshow("Human Detection - Approach Phase", annotated_frame)
                     
                     if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -408,16 +397,12 @@ class HumanApproach:
     def cleanup(self, keep_resources=False):
         """
         Clean up resources.
-        If keep_resources=True, don't release camera and video writer (for continued recording).
+        If keep_resources=True, don't release camera (for continued use).
         """
         self.running = False
         time.sleep(0.5)  # Give threads time to finish
         
         if not keep_resources:
-            if self.video_writer and self._own_writer:
-                self.video_writer.release()
-                print("Video saved.")
-            
             if self.cap and self._own_cap:
                 self.cap.release()
         
@@ -485,28 +470,6 @@ def initialize_face_system():
     return face_server
 
 
-def record_video_continuously(cap, video_writer, running_flag, fps=30):
-    """Background thread to continuously record video at specified FPS."""
-    frame_interval = 1.0 / fps  # Time between frames
-    last_frame_time = time.time()
-    
-    while running_flag[0]:
-        current_time = time.time()
-        elapsed = current_time - last_frame_time
-        
-        # Only read and write frame if enough time has passed (to maintain FPS)
-        if elapsed >= frame_interval:
-            ret, frame = cap.read()
-            if ret and video_writer:
-                video_writer.write(frame)
-                last_frame_time = current_time
-            else:
-                time.sleep(0.01)
-        else:
-            # Sleep for the remaining time until next frame
-            time.sleep(max(0.001, frame_interval - elapsed))
-
-
 def main():
     """Main program flow."""
     print("=" * 60)
@@ -514,8 +477,8 @@ def main():
     print("=" * 60)
     print()
     
-    # Initialize camera and video recording for entire session
-    print("Initializing camera and video recording...")
+    # Initialize camera for detection
+    print("Initializing camera...")
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("Error: could not open webcam.")
@@ -526,31 +489,8 @@ def main():
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     cap.set(cv2.CAP_PROP_FPS, 30)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    
-    # Initialize video writer for entire session
-    frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    video_filename = f"robot_session_{timestamp}.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(video_filename, fourcc, 30, (frame_width, frame_height))
-    
-    if not video_writer.isOpened():
-        print(f"Warning: Could not initialize video writer")
-        video_writer = None
-    else:
-        print(f"Recording entire session to: {video_filename}")
+    print("✓ Camera initialized")
     print()
-    
-    # Start continuous video recording in background
-    recording_running = [True]
-    recording_fps = 30  # Target FPS for recording
-    recording_thread = threading.Thread(
-        target=record_video_continuously, 
-        args=(cap, video_writer, recording_running, recording_fps),
-        daemon=True
-    )
-    recording_thread.start()
     
     # Initialize face system before approaching human
     face_server = initialize_face_system()
@@ -558,17 +498,16 @@ def main():
     try:
         # Step 1: Human Detection and Approach
         approach = HumanApproach(target_height=280, fps_target=30, camera_id=0,
-                                cap=cap, video_writer=video_writer, move_duration=2.0)
+                                cap=cap, move_duration=2.0)
         human_reached = approach.run(timeout=300)  # 5 minute timeout
         
         if not human_reached:
             print("\n⚠ Warning: Human not reached. Proceeding to voice chat anyway...")
             time.sleep(2)
         
-        # Step 2: Voice Conversation (video recording continues in background)
+        # Step 2: Voice Conversation
         print("\n" + "=" * 60)
         print("Starting Voice Conversation System...")
-        print("(Video recording continues in background)")
         print("=" * 60)
         print()
         
@@ -605,15 +544,7 @@ def main():
             move_backward(duration=backward_duration, velocity=0.25)
     
     finally:
-        # Stop recording
-        recording_running[0] = False
-        time.sleep(0.5)  # Give recording thread time to finish
-        
         # Final cleanup
-        if video_writer:
-            video_writer.release()
-            print(f"\nVideo saved to: {video_filename}")
-        
         if cap:
             cap.release()
         
