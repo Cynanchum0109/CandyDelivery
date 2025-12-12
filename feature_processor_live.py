@@ -248,6 +248,37 @@ class FeatureProcessorLive:
 
         timestamp_ms = time.time() * 1000.0
 
+        with self.state_lock:
+            self.latest_state = {
+                "frame": self.frame_count,
+                "timestamp": timestamp_ms,
+
+                "slouch_ratio": slouch,
+                "shoulder_width_ratio": shoulder_ratio,
+                "engagement_zone": zone,   # 保留 string，给人看
+                "dist_proxy": dist_proxy,
+
+                "face_vis_yolo": face_vis_yolo,
+                "face_vis_insight": face_vis_insight,
+
+                "head_yaw": yaw,
+                "head_pitch": pitch,
+                "head_roll": roll,
+                "is_looking_at_robot": is_looking,
+
+                "AU12_Smile": smile,
+                "AU45_EyeOpen": eyes,
+                "AU25_MouthOpen": mouth,
+                "AU01_BrowRaise": brow,
+
+                "nod_energy": nod,
+                "shake_energy": shake,
+                "is_waving": is_waving,
+
+                "engage_label": None,
+            }
+
+
         # --------------------------------
         # Optional: Prediction (SAFE)
         # --------------------------------
@@ -301,7 +332,9 @@ class FeatureProcessorLive:
             with self.state_lock:
                 self.latest_prediction = label
                 self.latest_prob = prob
+                self.latest_state["engage_label"] = label
 
+        
     # -----------------------------------------------------
     #   Public API
     # -----------------------------------------------------
