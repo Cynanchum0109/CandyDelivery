@@ -11,6 +11,27 @@ import joblib
 # Constants
 FACE_SKIP_FRAMES = 5
 HISTORY_LEN = 15
+# === MUST MATCH TRAINING CSV EXACTLY ===
+FEATURE_COLUMNS = [
+    "slouch_ratio",
+    "shoulder_width_ratio",
+    "engagement_zone",
+    "dist_proxy",
+    "face_vis_yolo",
+    "face_vis_insight",
+    "head_yaw",
+    "head_pitch",
+    "head_roll",
+    "is_looking_at_robot",
+    "AU12_Smile",
+    "AU45_EyeOpen",
+    "AU25_MouthOpen",
+    "AU01_BrowRaise",
+    "nod_energy",
+    "shake_energy",
+    "is_waving",
+]
+
 
 class FeatureProcessorLive:
     """
@@ -227,87 +248,59 @@ class FeatureProcessorLive:
 
         timestamp_ms = time.time() * 1000.0
 
-        # ---------------------------------
-        # Assemble state vector
-        # ---------------------------------
-        new_state = {
-            "frame": self.frame_count,
-            "timestamp": timestamp_ms,
-
-            "slouch_ratio": slouch,
-            "shoulder_width_ratio": shoulder_ratio,
-            "engagement_zone": zone,
-            "dist_proxy": dist_proxy,
-
-            "face_vis_yolo": face_vis_yolo,
-            "face_vis_insight": face_vis_insight,
-
-            "head_yaw": yaw,
-            "head_pitch": pitch,
-            "head_roll": roll,
-            "is_looking_at_robot": is_looking,
-
-            "AU12_Smile": smile,
-            "AU45_EyeOpen": eyes,
-            "AU25_MouthOpen": mouth,
-            "AU01_BrowRaise": brow,
-
-            "nod_energy": nod,
-            "shake_energy": shake,
-            "is_waving": is_waving,
-
-            "engage_label": None,
-        }
-
-        # Save state thread-safe
-        with self.state_lock:
-            self.latest_state = new_state
-
         # --------------------------------
-        # Optional: Prediction
+        # Optional: Prediction (SAFE)
         # --------------------------------
         if self.use_prediction and self.scaler and self.model:
 
-                        # Encode zone from string -> numeric
-            zone_map = {"Public": 0, "Social": 1, "Intimate": 2}
-            zone_code = zone_map.get(zone, 0)
-
-            vec = np.array([
-                slouch,                # slouch_ratio
-                shoulder_ratio,        # shoulder_width_ratio
-                zone_code,             # engagement_zone
-                dist_proxy,            # dist_proxy
-                face_vis_yolo,         # face_vis_yolo
-                face_vis_insight,      # face_vis_insight
-                yaw,                   # head_yaw
-                pitch,                 # head_pitch
-                roll,                  # head_roll
-                is_looking,            # is_looking_at_robot
-                smile,                 # AU12_Smile
-                eyes,                  # AU45_EyeOpen
-                mouth,                 # AU25_MouthOpen
-                brow,                  # AU01_BrowRaise
-                nod,                   # nod_energy
-                shake,                 # shake_energy
-                is_waving,             # is_waving
-            ]).reshape(1, -1)
-
-            # Suppress sklearn warning about feature names
+            import pandas as pd
             import warnings
+
+            # Encode zone EXACTLY like training
+            ZONE_MAP = {
+                "Intimate": 0,
+                "Social": 1,
+                "Public": 2,
+                "Unknown": 3,
+            }
+            zone_code = ZONE_MAP.get(zone, 3)
+
+            # Build feature dict (names MUST match CSV)
+            feature_dict = {
+                "slouch_ratio": slouch,
+                "shoulder_width_ratio": shoulder_ratio,
+                "engagement_zone": zone_code,
+                "dist_proxy": dist_proxy,
+                "face_vis_yolo": face_vis_yolo,
+                "face_vis_insight": face_vis_insight,
+                "head_yaw": yaw,
+                "head_pitch": pitch,
+                "head_roll": roll,
+                "is_looking_at_robot": is_looking,
+                "AU12_Smile": smile,
+                "AU45_EyeOpen": eyes,
+                "AU25_MouthOpen": mouth,
+                "AU01_BrowRaise": brow,
+                "nod_energy": nod,
+                "shake_energy": shake,
+                "is_waving": is_waving,
+            }
+
+            # DataFrame → column reorder (CRITICAL)
+            X = pd.DataFrame([feature_dict])
+            X = X[FEATURE_COLUMNS]
+
+            # Scale + predict
             with warnings.catch_warnings():
-                warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
-                scaled = self.scaler.transform(vec)
-            prob = self.model.predict_proba(scaled)[0][1]
+                warnings.filterwarnings("ignore", category=UserWarning)
+                X_scaled = self.scaler.transform(X)
+
+            prob = float(self.model.predict_proba(X_scaled)[0][1])
             label = int(prob > 0.5)
 
             with self.state_lock:
                 self.latest_prediction = label
-                self.latest_prob = float(prob)
-
-        else:
-            with self.state_lock:
-                self.latest_prediction = None
-                self.latest_prob = None
+                self.latest_prob = prob
 
     # -----------------------------------------------------
     #   Public API
