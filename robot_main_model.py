@@ -557,8 +557,6 @@ def main():
     
     try:
         # Step 1: Human Detection and Approach
-
-
         approach = HumanApproach(target_height=280, fps_target=30, camera_id=0,
                                 cap=cap, video_writer=video_writer, move_duration=2.0)
         human_reached = approach.run(timeout=300)  # 5 minute timeout
@@ -568,8 +566,6 @@ def main():
             time.sleep(2)
         
         # Step 2: Voice Conversation (video recording continues in background)
-
-
         print("\n" + "=" * 60)
         print("Starting Voice Conversation System...")
         print("(Video recording continues in background)")
@@ -580,7 +576,7 @@ def main():
         try:
             # Reuse existing face_server and don't open window again
 
-            feature_stream = FeatureProcessorLive(cap,use_prediction=False)  
+            feature_stream = FeatureProcessorLive(cap, use_prediction=True)  
             feature_stream.start()
 
             voice_chat = VoiceCandyChat(
