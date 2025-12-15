@@ -74,8 +74,8 @@
     }
 
     .exit-button {
-      background: #ef4444;
-      color: white;
+      background: #ffb347;
+      color: transparent;
       border: none;
       padding: 6px 12px;
       border-radius: 6px;
@@ -83,14 +83,16 @@
       font-weight: 600;
       cursor: pointer;
       transition: background 0.2s;
+      min-width: 30px;
+      min-height: 30px;
     }
 
     .exit-button:hover {
-      background: #dc2626;
+      background: #ff8c00;
     }
 
     .exit-button:active {
-      background: #b91c1c;
+      background: #ffa647;
     }
 
     .messages {
@@ -170,7 +172,7 @@
     <div class="chat-panel">
       <div class="chat-header">
         <span>Conversation</span>
-        <button class="exit-button" id="exit-button">Exit</button>
+        <button class="exit-button" id="exit-button"></button>
       </div>
       <div class="messages" id="messages"></div>
     </div>
@@ -260,7 +262,6 @@
     exitButton.addEventListener("click", () => {
       if (socket.readyState === WebSocket.OPEN) {
         socket.send("EXIT");
-        exitButton.textContent = "Exiting...";
         exitButton.disabled = true;
       }
     });

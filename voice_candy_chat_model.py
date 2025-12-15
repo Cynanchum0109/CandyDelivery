@@ -254,6 +254,10 @@ class VoiceCandyChat:
         self.configure_tts()
         self.feature_processor = feature_processor
         self.disengage_counter = 0
+        self.should_disengage = False  # Flag set by background monitoring thread
+        # Start background thread to monitor disengagement every 1.5 seconds
+        self._disengage_monitor_thread = threading.Thread(target=self._monitor_disengagement, daemon=True)
+        self._disengage_monitor_thread.start()
 
 
     def _open_face_window(self):
@@ -497,6 +501,34 @@ class VoiceCandyChat:
                 self._can_listen.set()
                 break
 
+    def _monitor_disengagement(self):
+        """Background thread: Check disengagement every 1.5 seconds"""
+        # Wait 20 seconds after conversation starts before beginning disengagement detection
+        print("[DISENGAGE MONITOR] Waiting 15 seconds before starting disengagement detection...")
+        time.sleep(15)
+        print("[DISENGAGE MONITOR] Starting disengagement detection now.")
+        
+        while not self._exit_event.is_set():
+            if self.feature_processor:
+                try:
+                    label, prob = self.feature_processor.get_prediction()
+                    print(f"[ENGAGEMENT] label={label}, prob={prob:.2f}")
+
+                    # RULE: Accumulate disengagement signals (total 3 times to exit)
+                    if label == 0:
+                        self.disengage_counter += 1
+                        print(f"[DISENGAGE] Disengagement detected. Count: {self.disengage_counter}/3")
+                    # Note: counter is NOT reset when engaged, only accumulates
+
+                    if self.disengage_counter >= 5:  # Total 3 disengagement signals
+                        self.should_disengage = True
+                        print("[DISENGAGE] User disengaged → Will exit after current response.")
+                except Exception as e:
+                    print(f"[DISENGAGE MONITOR] Error: {e}")
+            
+            # Wait 1.5 seconds before next check
+            time.sleep(0.7)
+
     def _start_keyboard_listener(self):
         """启动键盘监听器（使用安全的方式，避免macOS线程问题）"""
         import platform
@@ -600,10 +632,8 @@ class VoiceCandyChat:
                 # 检查 WebSocket 退出请求（无需新线程，在主循环中检查）
                 if self.face.is_exit_requested():
                     print("Exit requested from web interface.")
-                    self.speak(
-                        "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
-                    )
-                    time.sleep(2)  # Wait 2 seconds before exiting
+                    self.speak("Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~")
+                    time.sleep(1.5)
                     return
                 
                 user_text = ""
@@ -611,37 +641,28 @@ class VoiceCandyChat:
                     user_text = self.listen()
 
                 if user_text == "__EXIT__":
-                    self.speak(
-                        "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
-                    )
-                    time.sleep(2)  # Wait 2 seconds before exiting
+                    self.speak("Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~")
+                    time.sleep(1.5)
                     return
 
                 if user_text.lower() in {"quit", "exit", "goodbye", "bye", "see you", "see ya"}:
                     print("Exiting voice chat...")
-                    self.speak("Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!")
-                    time.sleep(2)  # Wait 2 seconds before exiting
+                    self.speak("Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~")
+                    time.sleep(1.5)
                     return
 
-                if self.feature_processor:
-                    label, prob = self.feature_processor.get_prediction()
-                    print(f"[ENGAGEMENT] label={label}, prob={prob:.2f}")
-
-                    # RULE: If disengaged for several cycles → exit conversation
-                    if label == 0 and prob < 0.4:
-                        self.disengage_counter += 1
-                    else:
-                        self.disengage_counter = 0
-
-                    if self.disengage_counter >= 3:   # e.g., 3 consecutive disengagement signals
-                        print("User disengaged → Ending conversation.")
-                        self.speak("Alright, I'll let you get back to your day. Have a great one!")
-                        time.sleep(1.5)
-                        return
-
-                response = self.chat.get_response(user_text)
-                self.speak(response)
-                time.sleep(0.3)
+                # Check disengagement flag (set by background monitoring thread)
+                if self.should_disengage:
+                    print("User disengaged → Ending conversation.")
+                    response = "Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~"
+                    self.speak(response)
+                    time.sleep(1.5)
+                    return
+                else:
+                    # Normal flow: generate API response
+                    response = self.chat.get_response(user_text)
+                    self.speak(response)
+                    time.sleep(0.3)
         except KeyboardInterrupt:
             print("\nInterrupted by user. Goodbye!")
         finally:

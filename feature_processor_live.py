@@ -79,6 +79,9 @@ class FeatureProcessorLive:
         # Prediction outputs
         self.latest_prediction = None
         self.latest_prob = None
+        
+        # Time tracking for probability override
+        self.start_time = None
 
     # -----------------------------------------------------
     #   Full Feature State Structure
@@ -327,7 +330,12 @@ class FeatureProcessorLive:
                 X_scaled = self.scaler.transform(X)
 
             prob = float(self.model.predict_proba(X_scaled)[0][1])
-            label = int(prob > 0.5)
+            
+            # Check if 180 seconds have passed - if so, use threshold 0.6 instead of 0.50
+            if self.start_time is not None and (time.time() - self.start_time) >= 180:
+                label = int(prob > 0.6)
+            else:
+                label = int(prob > 0.50)
 
             with self.state_lock:
                 self.latest_prediction = label
@@ -361,6 +369,7 @@ class FeatureProcessorLive:
 
     def start(self):
         self.running = True
+        self.start_time = time.time()  # Record start time for 180s override
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 

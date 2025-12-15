@@ -598,7 +598,7 @@ class VoiceCandyChat:
                 if self.face.is_exit_requested():
                     print("Exit requested from web interface.")
                     self.speak(
-                        "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
+                        "Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~"
                     )
                     time.sleep(2)  # Wait 2 seconds before exiting
                     return
@@ -608,14 +608,14 @@ class VoiceCandyChat:
                     user_text = self.listen()
                 if user_text == "__EXIT__":
                     self.speak(
-                        "Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!"
+                        "Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~"
                     )
                     time.sleep(2)  # Wait 2 seconds before exiting
                     return
 
                 if user_text.lower() in {"quit", "exit", "goodbye", "bye", "see you", "see ya"}:
                     print("Exiting voice chat...")
-                    self.speak("Fantastic! I'm glad we met. Time to find the next candy friend. See you soon!")
+                    self.speak("Alright. I’m going to move on now. Enjoy the rest of your day! Bye for now~")
                     time.sleep(2)  # Wait 2 seconds before exiting
                     return
 

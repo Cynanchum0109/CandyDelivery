@@ -366,19 +366,23 @@ class HumanApproach:
                     cv2.putText(annotated_frame, status_text, (10, 60),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
-                    cv2.imshow("Human Detection - Approach Phase", annotated_frame)
+                    # Video display disabled
+                    # cv2.imshow("Human Detection - Approach Phase", annotated_frame)
                     
+                    # Keep waitKey for event processing (allows 'q' key to skip)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         print("\nSkipping to voice chat...")
                         break
                         
                 except queue.Empty:
-                    blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                    cv2.putText(blank_frame, "Waiting for detection...", (150, 240),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.imshow("Human Detection - Approach Phase", blank_frame)
+                    # Video display disabled
+                    # blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                    # cv2.putText(blank_frame, "Waiting for detection...", (150, 240),
+                    #            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    # cv2.imshow("Human Detection - Approach Phase", blank_frame)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
+                    time.sleep(0.01)  # Small sleep to avoid busy waiting
         
         except KeyboardInterrupt:
             print("\nInterrupted by user")
@@ -470,11 +474,109 @@ def initialize_face_system():
     return face_server
 
 
+# Add request_exit method to FaceServer (monkey patch)
+def face_server_request_exit(self):
+    """Actively trigger exit request"""
+    self._exit_requested.set()
+
+FaceServer.request_exit = face_server_request_exit
+
+
+class VoiceCandyChatWithTimeout:
+    """
+    VoiceCandyChat wrapper with fixed timeout functionality.
+    
+    This adds a fixed time limit to the conversation, while preserving the existing
+    disengagement detection mechanism. The conversation will stop when EITHER:
+    1. Fixed time duration is reached (this wrapper)
+    2. User disengagement is detected (existing VoiceCandyChat mechanism)
+    """
+    
+    def __init__(self, voice_chat, timeout_duration):
+        """
+        Args:
+            voice_chat: VoiceCandyChat instance (with feature_processor for disengagement detection)
+            timeout_duration: Fixed timeout duration in seconds
+        """
+        self.voice_chat = voice_chat
+        self.timeout_duration = timeout_duration
+        self.start_time = None
+        self.is_running = False
+        self.should_stop = threading.Event()
+        
+    def _timeout_monitor(self):
+        """
+        Monitor time and trigger stop when timeout is reached.
+        Also checks if disengagement detection has already triggered exit.
+        """
+        start = time.time()
+        while not self.should_stop.is_set():
+            # Check if disengagement detection has already triggered exit
+            if hasattr(self.voice_chat, 'should_disengage') and self.voice_chat.should_disengage:
+                break
+            
+            elapsed = time.time() - start
+            remaining = self.timeout_duration - elapsed
+            
+            if remaining <= 0:
+                print(f"\n⏰ Fixed interaction duration reached ({self.timeout_duration:.1f} seconds)")
+                # Trigger exit - set multiple exit flags to ensure immediate exit
+                if hasattr(self.voice_chat, 'face'):
+                    try:
+                        self.voice_chat.face.request_exit()
+                    except Exception as e:
+                        print(f"⚠ Error triggering face exit: {e}")
+                
+                # Directly set exit event to ensure blocking operations like listen() can be interrupted
+                try:
+                    self.voice_chat._exit_event.set()
+                    self.voice_chat._can_listen.set()  # Ensure listen() can check exit
+                    self.voice_chat._speech_playing.clear()  # Stop speech playback
+                except Exception as e:
+                    print(f"⚠ Error setting exit event: {e}")
+                
+                break
+            
+            # Check every 0.5 seconds without printing
+            time.sleep(0.5)
+    
+    def run_with_timeout(self):
+        """
+        Run conversation with both fixed timeout and disengagement detection.
+        
+        The conversation will stop when EITHER:
+        1. Fixed time duration is reached (monitored by this wrapper)
+        2. User disengagement is detected (monitored by VoiceCandyChat's internal mechanism)
+        """
+        self.start_time = time.time()
+        self.is_running = True
+        
+        # Start timeout monitoring thread (runs in parallel with disengagement detection)
+        monitor_thread = threading.Thread(target=self._timeout_monitor, daemon=True)
+        monitor_thread.start()
+        
+        # Run conversation (will block until exit)
+        # Note: VoiceCandyChat.run() internally monitors disengagement via feature_processor
+        try:
+            self.voice_chat.run()
+        except Exception as e:
+            print(f"⚠ Voice chat system error: {e}")
+        finally:
+            self.should_stop.set()
+            self.is_running = False
+
+
 def main():
     """Main program flow."""
     print("=" * 60)
     print("Candy Delivery Robot - Main Program")
     print("=" * 60)
+    print()
+    
+    # Fixed interaction duration: 300 seconds
+    FIXED_INTERACTION_DURATION = 300.0
+    
+    print(f"⏱️  Fixed interaction duration: {FIXED_INTERACTION_DURATION:.1f}s")
     print()
     
     # Initialize camera for detection
@@ -505,27 +607,38 @@ def main():
             print("\n⚠ Warning: Human not reached. Proceeding to voice chat anyway...")
             time.sleep(2)
         
-        # Step 2: Voice Conversation
+        # Step 2: Voice Conversation (with fixed timeout AND disengagement detection)
         print("\n" + "=" * 60)
         print("Starting Voice Conversation System...")
         print("=" * 60)
+        print()
+        print("⚠ Conversation will stop when:")
+        print(f"   1. Fixed time duration reached ({FIXED_INTERACTION_DURATION:.1f}s)")
+        print("   2. User disengagement detected (via feature processor)")
         print()
         
         interaction_completed = False
         try:
             # Reuse existing face_server and don't open window again
-
             feature_stream = FeatureProcessorLive(cap, use_prediction=True)  
             feature_stream.start()
 
             voice_chat = VoiceCandyChat(
                 open_face_window=False,
                 face_server=face_server,
-                feature_processor=feature_stream   # NEW
+                feature_processor=feature_stream   # For disengagement detection
             )
 
-            voice_chat.run()
+            # Use fixed timeout wrapper (adds time limit while preserving disengagement detection)
+            chat_with_timeout = VoiceCandyChatWithTimeout(voice_chat, FIXED_INTERACTION_DURATION)
+            chat_with_timeout.run_with_timeout()
+            
             interaction_completed = True
+            # Check which mechanism triggered the exit
+            if hasattr(voice_chat, 'should_disengage') and voice_chat.should_disengage:
+                print(f"\n✓ Interaction completed (stopped due to disengagement detection)")
+            else:
+                print(f"\n✓ Interaction completed (stopped at fixed duration: {FIXED_INTERACTION_DURATION:.1f}s)")
         except Exception as e:
             print(f"⚠ Error in voice chat: {e}")
             import traceback

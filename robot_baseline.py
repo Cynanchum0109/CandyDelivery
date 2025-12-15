@@ -362,23 +362,24 @@ class HumanApproach:
                             time.sleep(1.0)  # Brief pause before transition
                             break
                     
-                    # Add status text
-                    cv2.putText(annotated_frame, status_text, (10, 60),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    # Add status text (disabled - no window display)
+                    # cv2.putText(annotated_frame, status_text, (10, 60),
+                    #            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     
-                    cv2.imshow("Human Detection - Approach Phase", annotated_frame)
+                    # cv2.imshow("Human Detection - Approach Phase", annotated_frame)
                     
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        print("\nSkipping to voice chat...")
-                        break
+                    # if cv2.waitKey(1) & 0xFF == ord('q'):
+                    #     print("\nSkipping to voice chat...")
+                    #     break
                         
                 except queue.Empty:
-                    blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-                    cv2.putText(blank_frame, "Waiting for detection...", (150, 240),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                    cv2.imshow("Human Detection - Approach Phase", blank_frame)
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
+                    # blank_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+                    # cv2.putText(blank_frame, "Waiting for detection...", (150, 240),
+                    #            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                    # cv2.imshow("Human Detection - Approach Phase", blank_frame)
+                    # if cv2.waitKey(1) & 0xFF == ord('q'):
+                    #     break
+                    pass
         
         except KeyboardInterrupt:
             print("\nInterrupted by user")
@@ -554,33 +555,6 @@ class VoiceCandyChatWithTimeout:
         finally:
             self.should_stop.set()
             self.is_running = False
-            
-        actual_duration = time.time() - self.start_time
-        return actual_duration
-
-
-def load_interaction_history(dataset_file='interaction_time_dataset.md'):
-    """Load historical interaction durations from dataset file (for feature engineering)"""
-    import re
-    durations = []
-    
-    try:
-        with open(dataset_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-        
-        for line in lines:
-            # Match table row format: | 00:13 | 02:20 | 127 |
-            match = re.match(r'^\|\s*(\d{2}:\d{2})\s*\|\s*(\d{2}:\d{2})\s*\|\s*(\d+)\s*\|', line)
-            if match:
-                try:
-                    duration = int(match.group(3))
-                    durations.append(duration)
-                except ValueError:
-                    continue
-    except Exception as e:
-        print(f"⚠ Unable to load historical data: {e}")
-    
-    return durations
 
 
 def main():
@@ -599,16 +573,6 @@ def main():
         print(f"⚠ Unable to load model: {e}")
         print("Will use default interaction duration (120 seconds)")
         model, scaler = None, None
-    
-    # Load historical interaction data (for feature engineering)
-    print("Loading historical interaction data...")
-    durations_history = load_interaction_history()
-    if durations_history:
-        print(f"✓ Loaded {len(durations_history)} historical interaction records")
-    else:
-        print("⚠ No historical data found, will use empty history")
-        durations_history = []
-    print()
     
     # Initialize camera (no recording, only for detection)
     print("Initializing camera...")
@@ -664,7 +628,7 @@ def main():
                     start_time_seconds, 
                     model, 
                     scaler, 
-                    durations_history
+                    None  # No runtime historical data needed, use model's trained features
                 )
                 
                 # Predicted value is end time (absolute time), need to calculate duration
@@ -675,8 +639,8 @@ def main():
                 print(f"   Predicted end time: {seconds_to_time_str(predicted_end_time)}")
                 print(f"   Predicted interaction duration: {predicted_duration:.1f}s ({seconds_to_time_str(predicted_duration)})")
                 
-                # Limit predicted duration to reasonable range (60-300 seconds)
-                predicted_duration = max(60.0, min(predicted_duration, 300.0))
+                # Limit predicted duration to reasonable range (60-200 seconds)
+                predicted_duration = max(60.0, min(predicted_duration, 200.0))
                 print(f"   Adjusted predicted duration: {predicted_duration:.1f}s")
                 
             except Exception as e:
@@ -691,7 +655,6 @@ def main():
         print()
         
         interaction_completed = False
-        actual_duration = None
         try:
             # Reuse existing face_server and don't open window again
             voice_chat = VoiceCandyChat(open_face_window=False, face_server=face_server)
@@ -699,15 +662,13 @@ def main():
             # If predicted duration exists, use timeout wrapper
             if predicted_duration:
                 chat_with_timeout = VoiceCandyChatWithTimeout(voice_chat, predicted_duration)
-                actual_duration = chat_with_timeout.run_with_timeout()
+                chat_with_timeout.run_with_timeout()
             else:
                 # No prediction, run directly (user manually exits)
                 voice_chat.run()
-                actual_duration = time.time() - conversation_start_time
             
             interaction_completed = True
-            if actual_duration:
-                print(f"\n✓ Interaction completed, actual duration: {actual_duration:.1f}s ({seconds_to_time_str(actual_duration)})")
+            print(f"\n✓ Interaction completed (auto-stopped at predicted duration)")
             
         except Exception as e:
             print(f"⚠ Error in voice chat: {e}")
@@ -731,15 +692,10 @@ def main():
             print("Session Summary")
             print("=" * 60)
             total_duration = time.time() - session_start_time
-            print(f"Total timing duration: {total_duration:.1f}s ({seconds_to_time_str(total_duration)})")
+            print(f"Total session duration: {total_duration:.1f}s ({seconds_to_time_str(total_duration)})")
             print(f"Conversation start time: {start_time_str}")
             if predicted_duration:
-                print(f"Predicted interaction duration: {predicted_duration:.1f}s")
-            if actual_duration:
-                print(f"Actual interaction duration: {actual_duration:.1f}s")
-                if predicted_duration:
-                    error = abs(actual_duration - predicted_duration)
-                    print(f"Prediction error: {error:.1f}s ({error/actual_duration*100:.1f}%)")
+                print(f"Predicted interaction duration: {predicted_duration:.1f}s ({seconds_to_time_str(predicted_duration)})")
             print("=" * 60)
     
     finally:
