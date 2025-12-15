@@ -41,3 +41,4 @@ openai_api_key
 *.pt
 yolov8*.pt
 
+video/
